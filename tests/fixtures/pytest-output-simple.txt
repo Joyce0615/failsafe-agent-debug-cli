@@ -1,0 +1,26 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.0, pytest-8.1.0, pluggy-1.4.0
+rootdir: /project
+collected 12 items
+
+tests/test_auth.py ..F.                                                  [ 33%]
+tests/test_user.py ........                                              [ 100%]
+
+=================================== FAILURES ===================================
+________________________________ test_missing_email ____________________________
+
+    def test_missing_email():
+        payload = {"id": "github_123", "username": "user"}
+>       result = create_user_from_oauth(payload)
+
+tests/test_auth.py:88:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    def create_user_from_oauth(payload):
+>       email = payload["email"]
+E       KeyError: 'email'
+
+src/auth.py:42: KeyError
+=========================== short test summary info ============================
+FAILED tests/test_auth.py::test_missing_email - KeyError: 'email'
+========================= 1 failed, 11 passed in 2.34s ========================

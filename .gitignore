@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+.failsafe/runs/
+.failsafe/history.sqlite
+.failsafe/code-index/
+*.log

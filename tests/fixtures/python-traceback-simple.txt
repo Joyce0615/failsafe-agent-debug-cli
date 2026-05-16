@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/project/src/auth.py", line 42, in create_user_from_oauth
+    email = payload["email"]
+KeyError: 'email'

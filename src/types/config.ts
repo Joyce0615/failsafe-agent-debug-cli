@@ -1,0 +1,88 @@
+import { z } from "zod";
+
+export const FailsafeConfigSchema = z.object({
+	schema_version: z.literal("0.1"),
+	default_format: z.enum(["json", "text"]).default("json"),
+	storage_dir: z.string().default(".failsafe"),
+	timeouts: z
+		.object({
+			run_seconds: z.number().default(120),
+			debug_launch_seconds: z.number().default(30),
+			step_seconds: z.number().default(10),
+		})
+		.default({}),
+	debug_adapters: z
+		.object({
+			python: z.object({ type: z.string().default("debugpy") }).default({}),
+			node: z.object({ type: z.string().default("node-inspector") }).default({}),
+		})
+		.default({}),
+	token_budget: z
+		.object({
+			max_output_bytes: z.number().default(6000),
+			include_raw_paths: z.boolean().default(true),
+		})
+		.default({}),
+	security: z
+		.object({
+			redact_env: z.boolean().default(true),
+			allow_mutating_eval: z.boolean().default(false),
+			allow_commands: z
+				.array(z.string())
+				.default([
+					"npm",
+					"npx",
+					"bun",
+					"bunx",
+					"node",
+					"python",
+					"python3",
+					"pytest",
+					"cargo",
+					"go",
+					"jest",
+					"vitest",
+					"tsc",
+					"eslint",
+					"biome",
+					"make",
+				]),
+			deny_patterns: z
+				.array(z.string())
+				.default(["rm -rf /", "rm -rf /*", "curl.*|.*sh", "sudo", "> /dev/sd"]),
+			timeout_seconds: z.number().default(120),
+		})
+		.default({}),
+	rules: z
+		.object({
+			rules_file: z.string().default(".failsafe/rules.yaml"),
+			auto_learn: z.boolean().default(true),
+			promotion_threshold: z
+				.object({
+					min_occurrences: z.number().int().default(5),
+					min_success_rate: z.number().default(0.8),
+					min_distinct_files: z.number().int().default(2),
+				})
+				.default({}),
+			staleness_days: z.number().int().default(90),
+			flaky_recurrence_threshold: z.number().int().default(3),
+		})
+		.default({}),
+});
+export type FailsafeConfig = z.infer<typeof FailsafeConfigSchema>;
+
+export const DEFAULT_CONFIG: FailsafeConfig = FailsafeConfigSchema.parse({
+	schema_version: "0.1",
+});
+
+export function resolveConfigPaths(cwd: string, config: FailsafeConfig) {
+	const storageDir = config.storage_dir.startsWith("/")
+		? config.storage_dir
+		: `${cwd}/${config.storage_dir}`;
+	return {
+		storageDir,
+		configFile: `${storageDir}/config.json`,
+		runsDir: `${storageDir}/runs`,
+		historyDb: `${storageDir}/history.sqlite`,
+	};
+}

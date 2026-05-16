@@ -1,0 +1,100 @@
+import type { Command } from "commander";
+import { runCommand } from "../capture/runner.js";
+import { detectAndParse } from "../parsers/index.js";
+import { computeSignature, signaturesMatch } from "../repro/signatures.js";
+import { outputResult, resolveOutputOptions } from "./format.js";
+import { createStore, loadConfig, resolveFailureId } from "./shared.js";
+
+export function registerVerifyCommand(program: Command): void {
+	program
+		.command("verify <failure-id>")
+		.description("Verify that a fix resolves the failure")
+		.option("--format <format>", "Output format: json or text")
+		.option("--timeout <seconds>", "Command timeout", "120")
+		.action(async (rawId: string, opts) => {
+			const config = loadConfig();
+			const store = createStore(config);
+			const outOpts = resolveOutputOptions(opts);
+			const timeoutMs = Number.parseInt(opts.timeout, 10) * 1000;
+
+			const failureId = resolveFailureId(rawId, store);
+			if (!failureId) {
+				outputResult({ error: true, message: "No failure found" }, outOpts);
+				process.exit(1);
+			}
+
+			const failure = store.getFailure(failureId);
+			if (!failure) {
+				outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
+				process.exit(1);
+			}
+
+			const repro = store.getRepro(failureId);
+			const checks: Array<{
+				kind: string;
+				command: string;
+				status: "passed" | "failed" | "error";
+				duration_ms: number;
+				message?: string;
+			}> = [];
+
+			// Run the minimal repro first (faster)
+			if (repro && repro.status === "verified") {
+				const reproResult = await runCommand(repro.command, {
+					cwd: failure.cwd,
+					timeout_ms: timeoutMs,
+				});
+				checks.push({
+					kind: "minimal_repro",
+					command: repro.command,
+					status: reproResult.exit_code === 0 ? "passed" : "failed",
+					duration_ms: reproResult.duration_ms,
+					message: reproResult.exit_code !== 0 ? "Minimal repro still fails after fix" : undefined,
+				});
+			}
+
+			// Run the original command
+			const originalResult = await runCommand(failure.command, {
+				cwd: failure.cwd,
+				timeout_ms: timeoutMs,
+			});
+			checks.push({
+				kind: "original_command",
+				command: failure.command,
+				status: originalResult.exit_code === 0 ? "passed" : "failed",
+				duration_ms: originalResult.duration_ms,
+				message: originalResult.exit_code !== 0 ? "Original command still fails" : undefined,
+			});
+
+			const allPassed = checks.every((c) => c.status === "passed");
+
+			// Build resolution candidate signature
+			const allErrors = failure.parsed.flatMap((p) => p.errors);
+			const signature = computeSignature(allErrors, failure.primary_location);
+
+			const output: Record<string, unknown> = {
+				failure_id: failureId,
+				status: allPassed ? "passed" : "failed",
+				checks,
+			};
+
+			if (allPassed) {
+				output.resolution_candidate = {
+					ready_to_store: true,
+					signature: `${signature.exception_type ?? "?"}|${signature.top_frame_function ?? "?"}|${signature.top_frame_file ?? "?"}`,
+				};
+			}
+
+			outputResult(output, outOpts, () => {
+				const lines = [`[VERIFY] ${failureId}: ${allPassed ? "PASSED" : "FAILED"}`];
+				for (const c of checks) {
+					const icon = c.status === "passed" ? "+" : "-";
+					lines.push(`  [${icon}] ${c.kind}: ${c.status} (${c.duration_ms}ms)`);
+					if (c.message) lines.push(`      ${c.message}`);
+				}
+				return lines.join("\n");
+			});
+
+			store.close();
+		});
+}
