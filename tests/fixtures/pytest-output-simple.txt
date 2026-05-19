@@ -10,7 +10,7 @@ tests/test_user.py ........                                              [ 100%]
 ________________________________ test_missing_email ____________________________
 
     def test_missing_email():
-        payload = {"id": "github_123", "username": "user"}
+        payload = {"id": "github_123", "username": "bjin"}
 >       result = create_user_from_oauth(payload)
 
 tests/test_auth.py:88:
