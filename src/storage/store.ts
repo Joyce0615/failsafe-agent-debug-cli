@@ -26,7 +26,12 @@ export class FailsafeStore {
 	 * Saves a complete failure run: writes raw output files to disk and
 	 * inserts the failure record into the database with file paths.
 	 */
-	saveRun(record: FailureRecord, stdout: string, stderr: string, combined: string): void {
+	saveRun(
+		record: FailureRecord,
+		stdout: string,
+		stderr: string,
+		combined: string,
+	): { stdout_path: string; stderr_path: string; combined_path: string } {
 		// Write raw output files to the run directory
 		const stdoutPath = this.files.writeStdout(record.failure_id, stdout);
 		const stderrPath = this.files.writeStderr(record.failure_id, stderr);
@@ -46,6 +51,8 @@ export class FailsafeStore {
 		};
 
 		this.sqlite.insertFailure(recordWithPaths);
+
+		return { stdout_path: stdoutPath, stderr_path: stderrPath, combined_path: combinedPath };
 	}
 
 	/**

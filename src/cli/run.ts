@@ -99,9 +99,9 @@ export function registerRunCommand(program: Command): void {
 				output.redaction = { applied: true, patterns_matched: allMatches };
 			}
 
-			// Compute token budget before saving so it persists on the record
-			const returnedBytes = Buffer.byteLength(JSON.stringify(output));
-			const tokenBudget = computeTokenBudget(rawBytes, returnedBytes);
+			// Compute initial token budget for the record (before --raw fields)
+			const compactBytes = Buffer.byteLength(JSON.stringify(output));
+			const tokenBudget = computeTokenBudget(rawBytes, compactBytes);
 			output.token_budget = tokenBudget;
 
 			const record: FailureRecord = {
@@ -125,8 +125,15 @@ export function registerRunCommand(program: Command): void {
 				token_budget: tokenBudget,
 			};
 
-			// Save to store (token_budget is already set)
-			store.saveRun(record, redactedStdout, redactedStderr, redactedCombined);
+			// Save to store — returns actual artifact paths on disk
+			const artifactPaths = store.saveRun(record, redactedStdout, redactedStderr, redactedCombined);
+
+			// Always include raw_paths so agents can fetch full output on demand
+			output.raw_paths = {
+				stdout: artifactPaths.stdout_path,
+				stderr: artifactPaths.stderr_path,
+				combined: artifactPaths.combined_path,
+			};
 
 			if (opts.raw) {
 				// Cap raw output per-field to half the byte limit (split between stdout/stderr)
@@ -135,7 +142,7 @@ export function registerRunCommand(program: Command): void {
 					const buf = Buffer.from(redactedStdout);
 					output.raw_stdout = buf.subarray(0, rawFieldLimit).toString("utf-8");
 					output.raw_stdout_truncated = true;
-					output.raw_stdout_path = record.stdout_path;
+					output.raw_stdout_full_bytes = Buffer.byteLength(redactedStdout);
 				} else {
 					output.raw_stdout = redactedStdout;
 				}
@@ -143,11 +150,15 @@ export function registerRunCommand(program: Command): void {
 					const buf = Buffer.from(redactedStderr);
 					output.raw_stderr = buf.subarray(0, rawFieldLimit).toString("utf-8");
 					output.raw_stderr_truncated = true;
-					output.raw_stderr_path = record.stderr_path;
+					output.raw_stderr_full_bytes = Buffer.byteLength(redactedStderr);
 				} else {
 					output.raw_stderr = redactedStderr;
 				}
 			}
+
+			// Recompute token_budget.returned_bytes after final output shape
+			const finalBytes = Buffer.byteLength(JSON.stringify(output));
+			output.token_budget = computeTokenBudget(rawBytes, finalBytes);
 
 			outputResult(output, outOpts, () => formatFailureText(record));
 			store.close();
