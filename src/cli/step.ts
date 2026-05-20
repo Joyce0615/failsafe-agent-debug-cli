@@ -6,7 +6,7 @@ import { createStore, loadConfig } from "./shared.js";
 export function registerStepCommand(program: Command): void {
 	program
 		.command("step")
-		.description("Step through execution and return state deltas")
+		.description("[experimental] Step through execution and return state deltas")
 		.requiredOption("--session <id>", "Debug session ID")
 		.option("--format <format>", "Output format: json or text")
 		.option("--over", "Step over (default)")
@@ -19,12 +19,15 @@ export function registerStepCommand(program: Command): void {
 			const store = createStore(config);
 			const outOpts = resolveOutputOptions(opts);
 
+			// Debug sessions are in-memory only within a single process.
+			// step/inspect from a separate CLI invocation cannot reconnect.
+			const controller = new DebugController(store);
+
 			let kind: "over" | "into" | "out" = "over";
 			if (opts.into) kind = "into";
 			else if (opts.out) kind = "out";
 
 			const count = Number.parseInt(opts.count, 10);
-			const controller = new DebugController(store);
 
 			try {
 				const delta = await controller.step(opts.session, kind, count);
@@ -70,10 +73,24 @@ export function registerStepCommand(program: Command): void {
 					return lines.join("\n");
 				});
 			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				const isNoSession = message.includes("No active debug session");
+
 				outputResult(
 					{
 						error: true,
-						message: `Step failed: ${err instanceof Error ? err.message : String(err)}`,
+						debug_unavailable: isNoSession,
+						message: isNoSession
+							? `No active debug session: ${opts.session}. Debug sessions are in-memory and do not persist across CLI invocations. Use 'failsafe debug <id>' to start a new session.`
+							: `Step failed: ${message}`,
+						next: isNoSession
+							? [
+									{
+										command: "failsafe diagnose last",
+										reason: "Get diagnosis without debug stepping",
+									},
+								]
+							: undefined,
 					},
 					outOpts,
 				);

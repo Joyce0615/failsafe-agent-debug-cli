@@ -1,12 +1,34 @@
 import type { Command } from "commander";
 import { DebugController } from "../debug/controller.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
+import { type OutputOptions, outputResult, resolveOutputOptions } from "./format.js";
 import { createStore, loadConfig } from "./shared.js";
+
+function handleDebugError(err: unknown, sessionId: string, outOpts: OutputOptions): void {
+	const message = err instanceof Error ? err.message : String(err);
+	const isNoSession = message.includes("No active debug session");
+
+	outputResult(
+		{
+			error: true,
+			debug_unavailable: isNoSession,
+			message: isNoSession
+				? `No active debug session: ${sessionId}. Debug sessions are in-memory and do not persist across CLI invocations. Use 'failsafe debug <id>' to start a new session.`
+				: `Inspect failed: ${message}`,
+			next: isNoSession
+				? [{ command: "failsafe diagnose last", reason: "Get diagnosis without debug stepping" }]
+				: undefined,
+		},
+		outOpts,
+	);
+	process.exit(1);
+}
 
 export function registerInspectCommand(program: Command): void {
 	const inspectCmd = program
 		.command("inspect")
-		.description("Inspect variables, expressions, stack, or source in a debug session");
+		.description(
+			"[experimental] Inspect variables, expressions, stack, or source in a debug session",
+		);
 
 	inspectCmd
 		.command("vars")
@@ -43,8 +65,7 @@ export function registerInspectCommand(program: Command): void {
 					},
 				);
 			} catch (err) {
-				outputResult({ error: true, message: String(err) }, outOpts);
-				process.exit(1);
+				handleDebugError(err, opts.session, outOpts);
 			}
 		});
 
@@ -80,8 +101,7 @@ export function registerInspectCommand(program: Command): void {
 							.join("\n"),
 				);
 			} catch (err) {
-				outputResult({ error: true, message: String(err) }, outOpts);
-				process.exit(1);
+				handleDebugError(err, opts.session, outOpts);
 			}
 		});
 
@@ -116,8 +136,7 @@ export function registerInspectCommand(program: Command): void {
 					},
 				);
 			} catch (err) {
-				outputResult({ error: true, message: String(err) }, outOpts);
-				process.exit(1);
+				handleDebugError(err, opts.session, outOpts);
 			}
 		});
 
@@ -152,8 +171,7 @@ export function registerInspectCommand(program: Command): void {
 					() => `${slice.file}:${slice.start_line}-${slice.end_line}\n${slice.text}`,
 				);
 			} catch (err) {
-				outputResult({ error: true, message: String(err) }, outOpts);
-				process.exit(1);
+				handleDebugError(err, opts.session, outOpts);
 			}
 		});
 }

@@ -10,7 +10,7 @@ import { createStore, loadConfig, resolveFailureId } from "./shared.js";
 export function registerDebugCommand(program: Command): void {
 	program
 		.command("debug <failure-id>")
-		.description("Launch a debugger around a failure or reproduction")
+		.description("[experimental] Launch a debugger around a failure or reproduction")
 		.option("--format <format>", "Output format: json or text")
 		.option("--break <location>", "Breakpoint location: 'primary' or file:line", "primary")
 		.option("--watch <expressions>", "Comma-separated watch expressions")
