@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { DebugController } from "../debug/controller.js";
-import { type OutputOptions, outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig } from "./shared.js";
+import { type OutputOptions, outputResult } from "./format.js";
+import { initCommand } from "./shared.js";
 
 function handleDebugError(err: unknown, sessionId: string, outOpts: OutputOptions): void {
 	const message = err instanceof Error ? err.message : String(err);
@@ -35,12 +35,11 @@ export function registerInspectCommand(program: Command): void {
 		.description("Inspect local variables")
 		.requiredOption("--session <id>", "Debug session ID")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--changed", "Show only changed variables")
 		.option("--scope <name>", "Filter by scope name")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const controller = new DebugController(store);
 
 			try {
@@ -74,10 +73,9 @@ export function registerInspectCommand(program: Command): void {
 		.description("Inspect call stack")
 		.requiredOption("--session <id>", "Debug session ID")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const controller = new DebugController(store);
 
 			try {
@@ -110,10 +108,9 @@ export function registerInspectCommand(program: Command): void {
 		.description("Evaluate an expression")
 		.requiredOption("--session <id>", "Debug session ID")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (expression: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const controller = new DebugController(store);
 
 			try {
@@ -145,10 +142,9 @@ export function registerInspectCommand(program: Command): void {
 		.description("Inspect source code around current location")
 		.requiredOption("--session <id>", "Debug session ID")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const controller = new DebugController(store);
 
 			try {

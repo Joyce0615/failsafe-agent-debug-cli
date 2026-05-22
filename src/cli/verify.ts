@@ -2,19 +2,18 @@ import type { Command } from "commander";
 import { runCommand } from "../capture/runner.js";
 import { detectAndParse } from "../parsers/index.js";
 import { computeSignature, signaturesMatch } from "../repro/signatures.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig, resolveFailureId } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand, resolveFailureId } from "./shared.js";
 
 export function registerVerifyCommand(program: Command): void {
 	program
 		.command("verify <failure-id>")
 		.description("Verify that a fix resolves the failure")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--timeout <seconds>", "Command timeout", "120")
 		.action(async (rawId: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const timeoutMs = Number.parseInt(opts.timeout, 10) * 1000;
 
 			const failureId = resolveFailureId(rawId, store);

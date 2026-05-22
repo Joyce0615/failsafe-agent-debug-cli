@@ -17,8 +17,14 @@ export function registerDoctorCommand(program: Command): void {
 		.command("doctor")
 		.description("Check system setup and dependencies")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
-			const outOpts = resolveOutputOptions(opts);
+			const config = loadConfig();
+			const outOpts = resolveOutputOptions(
+				opts,
+				config.default_format,
+				config.token_budget.max_output_bytes,
+			);
 			const checks: Check[] = [];
 
 			// Check Bun
@@ -48,7 +54,6 @@ export function registerDoctorCommand(program: Command): void {
 			checks.push(await checkCommand("git", ["--version"], "git"));
 
 			// Check .failsafe directory
-			const config = loadConfig();
 			const paths = resolveConfigPaths(process.cwd(), config);
 			checks.push({
 				name: "failsafe_storage",

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { DebugController } from "../debug/controller.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand } from "./shared.js";
 
 export function registerStepCommand(program: Command): void {
 	program
@@ -9,15 +9,14 @@ export function registerStepCommand(program: Command): void {
 		.description("[experimental] Step through execution and return state deltas")
 		.requiredOption("--session <id>", "Debug session ID")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--over", "Step over (default)")
 		.option("--into", "Step into")
 		.option("--out", "Step out")
 		.option("--count <n>", "Number of steps", "1")
 		.option("--summary <mode>", "Summary mode: delta or full", "delta")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			// Debug sessions are in-memory only within a single process.
 			// step/inspect from a separate CLI invocation cannot reconnect.

@@ -1,19 +1,18 @@
 import type { Command } from "commander";
 import { generateRepro } from "../repro/engine.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig, resolveFailureId } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand, resolveFailureId } from "./shared.js";
 
 export function registerReproCommand(program: Command): void {
 	program
 		.command("repro <failure-id>")
 		.description("Create or identify a minimal reproduction for a failure")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--no-verify", "Skip repro verification (faster but less confident)")
 		.option("--timeout <seconds>", "Repro verification timeout", "60")
 		.action(async (rawId: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			const failureId = resolveFailureId(rawId, store);
 			if (!failureId) {

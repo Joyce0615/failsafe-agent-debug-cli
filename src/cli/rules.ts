@@ -6,7 +6,7 @@ import { listFlaky } from "../rules/flaky.js";
 import { disableRule } from "../rules/lifecycle.js";
 import type { DeclaredRule, LearnedRule } from "../rules/types.js";
 import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig } from "./shared.js";
+import { initCommand, loadConfig } from "./shared.js";
 
 export function registerRulesCommand(program: Command): void {
 	const rulesCmd = program
@@ -19,10 +19,9 @@ export function registerRulesCommand(program: Command): void {
 		.description("List all diagnosis rules")
 		.option("--source <source>", "Filter by source: declared, learned, or builtin")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const source = opts.source as string | undefined;
 
 			const allRules: Array<Record<string, unknown>> = [];
@@ -96,10 +95,9 @@ export function registerRulesCommand(program: Command): void {
 		.command("show <rule-id>")
 		.description("Show details for a specific rule")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (ruleId: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			// Try declared rules first
 			const rulesFilePath = `${process.cwd()}/${config.rules?.rules_file ?? ".failsafe/rules.yaml"}`;
@@ -148,9 +146,14 @@ export function registerRulesCommand(program: Command): void {
 		.command("validate")
 		.description("Validate declared rules file for errors")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
 			const config = loadConfig();
-			const outOpts = resolveOutputOptions(opts);
+			const outOpts = resolveOutputOptions(
+				opts,
+				config.default_format,
+				config.token_budget.max_output_bytes,
+			);
 
 			const rulesFilePath = `${process.cwd()}/${config.rules?.rules_file ?? ".failsafe/rules.yaml"}`;
 			let declared: DeclaredRule[];
@@ -206,10 +209,9 @@ export function registerRulesCommand(program: Command): void {
 		.description("Export learned rules as YAML snippets for promotion")
 		.option("--min-confidence <n>", "Minimum confidence threshold", "0.5")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const minConfidence = Number.parseFloat(opts.minConfidence);
 
 			const learned = store.listLearnedRules({ minConfidence });
@@ -253,10 +255,9 @@ export function registerRulesCommand(program: Command): void {
 		.command("disable <rule-id>")
 		.description("Disable a learned rule")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (ruleId: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			const rule = store.getLearnedRule(ruleId);
 			if (!rule) {
@@ -281,10 +282,9 @@ export function registerRulesCommand(program: Command): void {
 		.command("flaky")
 		.description("List failure signatures marked as flaky")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			const flakyRecords = listFlaky(store);
 

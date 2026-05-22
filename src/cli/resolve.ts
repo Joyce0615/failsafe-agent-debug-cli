@@ -6,8 +6,8 @@ import {
 	computeSignatureHash,
 } from "../rules/learned.js";
 import type { FixOutcome } from "../rules/types.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig, resolveFailureId } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand, resolveFailureId } from "./shared.js";
 
 export function registerResolveCommand(program: Command): void {
 	program
@@ -18,10 +18,9 @@ export function registerResolveCommand(program: Command): void {
 		.option("--fix-summary <summary>", "Description of the fix applied")
 		.option("--files-changed <files>", "Comma-separated list of changed files")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (rawId: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			const failureId = resolveFailureId(rawId, store);
 			if (!failureId) {

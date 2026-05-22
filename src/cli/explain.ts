@@ -1,16 +1,15 @@
 import type { Command } from "commander";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig, resolveFailureId } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand, resolveFailureId } from "./shared.js";
 
 export function registerExplainCommand(program: Command): void {
 	program
 		.command("explain <failure-id>")
 		.description("Combine all evidence into a compact explanation")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (rawId: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			const failureId = resolveFailureId(rawId, store);
 			if (!failureId) {

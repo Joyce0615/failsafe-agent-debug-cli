@@ -4,21 +4,20 @@ import { DebugController } from "../debug/controller.js";
 import { detectRuntime } from "../debug/launch.js";
 import { extractSourceSlice } from "../diagnosis/context.js";
 import type { SourceLocation } from "../types/common.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig, resolveFailureId } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand, resolveFailureId } from "./shared.js";
 
 export function registerDebugCommand(program: Command): void {
 	program
 		.command("debug <failure-id>")
 		.description("[experimental] Launch a debugger around a failure or reproduction")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--break <location>", "Breakpoint location: 'primary' or file:line", "primary")
 		.option("--watch <expressions>", "Comma-separated watch expressions")
 		.option("--runtime <runtime>", "Override runtime detection: python or node")
 		.action(async (rawId: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			const failureId = resolveFailureId(rawId, store);
 			if (!failureId) {

@@ -1,19 +1,18 @@
 import type { Command } from "commander";
 import { computeSignature } from "../repro/signatures.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig, resolveFailureId } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand, resolveFailureId } from "./shared.js";
 
 export function registerHistoryCommand(program: Command): void {
 	program
 		.command("history")
 		.description("Show prior failures and whether they were resolved")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--similar <failure-id>", "Find failures similar to this one")
 		.option("--limit <n>", "Max failures to show", "10")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 
 			if (opts.similar) {
 				const failureId = resolveFailureId(opts.similar, store);

@@ -6,6 +6,7 @@ import {
 	FailsafeConfigSchema,
 	resolveConfigPaths,
 } from "../types/config.js";
+import { type OutputOptions, resolveOutputOptions } from "./format.js";
 
 export function loadConfig(cwd?: string): FailsafeConfig {
 	const workDir = cwd ?? process.cwd();
@@ -35,4 +36,26 @@ export function resolveFailureId(idOrLast: string, store: FailsafeStore): string
 		return last?.failure_id ?? null;
 	}
 	return idOrLast;
+}
+
+/**
+ * Shared command initialization: loads config, creates store,
+ * resolves output options with config defaults and --max-bytes.
+ * Use this in every command handler for consistent behavior.
+ */
+export function initCommand(opts: {
+	format?: string;
+	raw?: boolean;
+	maxBytes?: string | number;
+}): { config: FailsafeConfig; store: FailsafeStore; outOpts: OutputOptions } {
+	const config = loadConfig();
+	const store = createStore(config);
+	const maxBytes =
+		typeof opts.maxBytes === "string" ? Number.parseInt(opts.maxBytes, 10) : opts.maxBytes;
+	const outOpts = resolveOutputOptions(
+		{ ...opts, maxBytes },
+		config.default_format,
+		config.token_budget.max_output_bytes,
+	);
+	return { config, store, outOpts };
 }

@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Command } from "commander";
 import type { FixOutcome, FlakyRecord, LearnedRule } from "../rules/types.js";
-import { outputResult, resolveOutputOptions } from "./format.js";
-import { createStore, loadConfig } from "./shared.js";
+import { outputResult } from "./format.js";
+import { initCommand } from "./shared.js";
 
 type KbExport = {
 	exported_at: string;
@@ -22,10 +22,9 @@ export function registerKbCommand(program: Command): void {
 		.option("--output <file>", "Output file path", "kb.json")
 		.option("--min-confidence <n>", "Minimum confidence for learned rules", "0.5")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const minConfidence = Number.parseFloat(opts.minConfidence);
 			const outputFile = opts.output as string;
 
@@ -71,10 +70,9 @@ export function registerKbCommand(program: Command): void {
 		.description("Import learned rules and flaky signatures from a JSON file")
 		.option("--dry-run", "Preview what would be imported without making changes")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (file: string, opts) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			const outOpts = resolveOutputOptions(opts);
+			const { config, store, outOpts } = initCommand(opts);
 			const dryRun = opts.dryRun === true;
 
 			let kbData: KbExport;

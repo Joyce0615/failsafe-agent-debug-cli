@@ -2,14 +2,21 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { Command } from "commander";
 import { DEFAULT_CONFIG, FailsafeConfigSchema, resolveConfigPaths } from "../types/config.js";
 import { outputResult, resolveOutputOptions } from "./format.js";
+import { loadConfig } from "./shared.js";
 
 export function registerInitCommand(program: Command): void {
 	program
 		.command("init")
 		.description("Initialize Failsafe in the current directory")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action((opts) => {
-			const outOpts = resolveOutputOptions(opts);
+			const config = loadConfig();
+			const outOpts = resolveOutputOptions(
+				opts,
+				config.default_format,
+				config.token_budget.max_output_bytes,
+			);
 			const cwd = process.cwd();
 			const paths = resolveConfigPaths(cwd, DEFAULT_CONFIG);
 
@@ -45,8 +52,14 @@ export function registerConfigCommand(program: Command): void {
 		.command("show")
 		.description("Show current configuration")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action((opts) => {
-			const outOpts = resolveOutputOptions(opts);
+			const cfgForDefaults = loadConfig();
+			const outOpts = resolveOutputOptions(
+				opts,
+				cfgForDefaults.default_format,
+				cfgForDefaults.token_budget.max_output_bytes,
+			);
 			const cwd = process.cwd();
 			const paths = resolveConfigPaths(cwd, DEFAULT_CONFIG);
 
@@ -67,8 +80,14 @@ export function registerConfigCommand(program: Command): void {
 		.command("set <key> <value>")
 		.description("Set a configuration value (dot-notation key)")
 		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action((key: string, value: string, opts) => {
-			const outOpts = resolveOutputOptions(opts);
+			const cfgForDefaults = loadConfig();
+			const outOpts = resolveOutputOptions(
+				opts,
+				cfgForDefaults.default_format,
+				cfgForDefaults.token_budget.max_output_bytes,
+			);
 			const cwd = process.cwd();
 			const paths = resolveConfigPaths(cwd, DEFAULT_CONFIG);
 
