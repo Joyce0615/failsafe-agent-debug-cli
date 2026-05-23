@@ -8,21 +8,39 @@ export type TestSelector = {
 	confidence: number;
 };
 
+/**
+ * Derive the pytest runner prefix from the original command.
+ * Preserves `python -m pytest` or `python3 -m pytest` if that's how it was invoked.
+ */
+function pytestRunner(originalCommand: string): string {
+	const moduleMatch = originalCommand.match(/(python3?\s+-m\s+pytest)/);
+	if (moduleMatch) return moduleMatch[1];
+	return "pytest";
+}
+
+/**
+ * Build a full pytest node ID: `file::test_name`.
+ * If test_name already starts with the file path, return it as-is.
+ */
+function buildPytestNodeId(testFile: string, testName: string): string {
+	if (testName.startsWith(testFile)) return testName;
+	// test_name may be "TestClass::test_method" — always prepend file
+	return `${testFile}::${testName}`;
+}
+
 export function extractPytestSelector(
 	errors: ParsedError[],
 	originalCommand: string,
 ): TestSelector | null {
+	const runner = pytestRunner(originalCommand);
+
 	// Look for test selectors from pytest FAILED markers
-	// Format: "FAILED tests/test_auth.py::TestAuth::test_missing_email"
 	for (const err of errors) {
 		if (err.test_file && err.test_name) {
-			// Full pytest selector: file::class::method or file::function
-			const selector = err.test_name.includes("::")
-				? err.test_name
-				: `${err.test_file}::${err.test_name}`;
+			const nodeId = buildPytestNodeId(err.test_file, err.test_name);
 			return {
 				framework: "pytest",
-				command: `pytest ${selector} -x`,
+				command: `${runner} ${nodeId} -x`,
 				test_file: err.test_file,
 				test_name: err.test_name,
 				confidence: 0.95,
@@ -35,7 +53,7 @@ export function extractPytestSelector(
 		if (err.location?.file?.includes("test")) {
 			return {
 				framework: "pytest",
-				command: `pytest ${err.location.file} -x`,
+				command: `${runner} ${err.location.file} -x`,
 				test_file: err.location.file,
 				confidence: 0.6,
 			};
@@ -45,15 +63,26 @@ export function extractPytestSelector(
 	return null;
 }
 
+/**
+ * Derive the Jest runner from the original command.
+ * Preserves ./node_modules/.bin/jest, npx jest, etc.
+ */
+function jestRunner(originalCommand: string): string {
+	const binMatch = originalCommand.match(/(\.\/node_modules\/\.bin\/jest)/);
+	if (binMatch) return binMatch[1];
+	if (originalCommand.includes("npx")) return "npx jest";
+	return "jest";
+}
+
 export function extractJestSelector(
 	errors: ParsedError[],
 	originalCommand: string,
 ): TestSelector | null {
+	const runner = jestRunner(originalCommand);
+
 	for (const err of errors) {
 		if (err.test_file && err.test_name) {
 			const escapedName = err.test_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-			// Determine runner from original command
-			const runner = originalCommand.includes("npx") ? "npx jest" : "jest";
 			return {
 				framework: "jest",
 				command: `${runner} ${err.test_file} -t "${escapedName}" --no-coverage`,
@@ -67,7 +96,6 @@ export function extractJestSelector(
 	// Fallback: file-level
 	for (const err of errors) {
 		if (err.test_file) {
-			const runner = originalCommand.includes("npx") ? "npx jest" : "jest";
 			return {
 				framework: "jest",
 				command: `${runner} ${err.test_file} --no-coverage`,
