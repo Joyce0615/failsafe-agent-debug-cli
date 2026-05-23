@@ -85,15 +85,79 @@ export async function extractTestSlice(
 	}
 }
 
+/**
+ * Find the git repository root for a given file path.
+ * Returns null if not in a git repo.
+ */
+async function findGitRoot(filePath: string): Promise<string | null> {
+	try {
+		// Determine a valid starting directory
+		const startDir = filePath.startsWith("/")
+			? filePath.substring(0, filePath.lastIndexOf("/")) || "/"
+			: process.cwd();
+
+		const proc = Bun.spawn(["git", "rev-parse", "--show-toplevel"], {
+			cwd: startDir,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const output = await new Response(proc.stdout).text();
+		const code = await proc.exited;
+		if (code !== 0) return null;
+		return output.trim() || null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Check whether the repo has at least one commit (HEAD exists).
+ */
+async function hasHead(gitRoot: string): Promise<boolean> {
+	try {
+		const proc = Bun.spawn(["git", "rev-parse", "HEAD"], {
+			cwd: gitRoot,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await new Response(proc.stdout).text();
+		const code = await proc.exited;
+		return code === 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Make a file path relative to a root directory.
+ */
+function relativeTo(filePath: string, root: string): string {
+	const abs = filePath.startsWith("/") ? filePath : `${process.cwd()}/${filePath}`;
+	if (abs.startsWith(root)) {
+		const rel = abs.substring(root.length);
+		return rel.startsWith("/") ? rel.substring(1) : rel;
+	}
+	return filePath;
+}
+
 export async function extractRecentDiff(file: string): Promise<string | null> {
 	try {
-		const proc = Bun.spawn(["git", "diff", "HEAD", "--", file], {
-			cwd: file.substring(0, file.lastIndexOf("/")),
+		const gitRoot = await findGitRoot(file);
+		if (!gitRoot) return null;
+
+		// Skip repos without any commits (no HEAD)
+		if (!(await hasHead(gitRoot))) return null;
+
+		const relPath = relativeTo(file, gitRoot);
+
+		const proc = Bun.spawn(["git", "diff", "HEAD", "--", relPath], {
+			cwd: gitRoot,
 			stdout: "pipe",
 			stderr: "pipe",
 		});
 		const text = await new Response(proc.stdout).text();
-		await proc.exited;
+		const code = await proc.exited;
+		if (code !== 0) return null;
 		return text.trim() || null;
 	} catch {
 		return null;
