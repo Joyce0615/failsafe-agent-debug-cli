@@ -3,7 +3,23 @@ dist/
 *.tsbuildinfo
 .env
 .env.local
+
+# Failsafe runtime artifacts
 .failsafe/runs/
 .failsafe/history.sqlite
+.failsafe/history.sqlite-shm
+.failsafe/history.sqlite-wal
 .failsafe/code-index/
+
+# Python cache artifacts
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Fixture project artifacts (not part of the repo)
+tests/e2e/node_project/node_modules/
+tests/e2e/pytest_project/.pytest_cache/
+
+# Logs
 *.log
