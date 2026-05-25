@@ -3,7 +3,7 @@
 Agent-first debugging CLI. Compresses noisy failure output into compact structured JSON packets so coding agents spend fewer tokens on debugging loops.
 
 ```
-failure -> compact diagnosis -> minimal repro -> debugger stepping -> state deltas -> verify
+failure -> compact diagnosis -> minimal repro -> verify
 ```
 
 ## Install
@@ -24,47 +24,49 @@ failsafe init
 failsafe run "pytest tests/"
 
 # Get a structured diagnosis
-failsafe diagnose --last
+failsafe diagnose last
 
 # Create a minimal reproduction
-failsafe repro --last
+failsafe repro last
 
 # Verify after fixing
-failsafe verify --last
+failsafe verify last
+
+# Record the fix for the knowledge base
+failsafe resolve last --success --fix-summary "Added null check"
 ```
 
-All commands output JSON by default. Use `--format text` for human-readable output.
+All commands output JSON by default. Use `--format text` for human-readable output. Use `--max-bytes` to cap output size.
 
 ## Commands
 
-### Core (Phase 0)
+### Core
 
 | Command | Description |
 |---------|-------------|
 | `failsafe run <cmd>` | Execute a command, capture output, return compact failure packet |
-| `failsafe diagnose <id>` | Build a root-cause hypothesis with evidence and confidence |
+| `failsafe diagnose <id\|last>` | Root-cause hypothesis with evidence and confidence |
+| `failsafe repro <id\|last>` | Extract a minimal reproduction (single test selector) |
+| `failsafe verify <id>` | Re-run repro and original command to confirm fix |
+| `failsafe explain <id>` | Combine all evidence into a compact explanation |
 | `failsafe init` | Initialize `.failsafe/` storage directory |
 | `failsafe config show\|set` | View or modify configuration |
 | `failsafe doctor` | Check system dependencies |
 | `failsafe history` | List past failures, find similar ones with `--similar <id>` |
 
-### Repro (Phase 1)
+### Debug (experimental)
+
+Debug stepping requires a DAP adapter. Currently supported: **Python** (debugpy). Node.js DAP support is planned.
 
 | Command | Description |
 |---------|-------------|
-| `failsafe repro <id>` | Extract a minimal reproduction (single test selector) |
-
-### Debug (Phase 2)
-
-| Command | Description |
-|---------|-------------|
-| `failsafe debug <id>` | Launch debugger at failure location (Python/debugpy, Node/inspector) |
+| `failsafe debug <id>` | Launch debugger at failure location |
 | `failsafe step --session <id>` | Step through execution, return state deltas |
 | `failsafe inspect vars\|stack\|expr\|source` | Inspect runtime state in a debug session |
-| `failsafe verify <id>` | Re-run repro and original command to confirm fix |
-| `failsafe explain <id>` | Combine all evidence into a compact explanation |
 
-### Tiered Rules (Phase 3)
+Debug sessions are in-memory within a single process. The `step` and `inspect` commands require an active session started by `debug` in the same invocation. For unsupported runtimes (Go, Rust, Java, .NET), Failsafe returns a structured packet with the future debugger name and fallback commands.
+
+### Tiered Rules
 
 | Command | Description |
 |---------|-------------|
@@ -114,27 +116,44 @@ Default output is JSON, optimized for agent consumption:
   "failure_id": "fail_01HZX...",
   "summary": "KeyError: 'email' in create_user_from_oauth",
   "primary_location": { "file": "src/auth.py", "line": 42 },
+  "test_summary": { "total": 18, "passed": 12, "failed": 6, "skipped": 0 },
+  "raw_paths": {
+    "stdout": ".failsafe/runs/fail_01HZX/stdout.log",
+    "stderr": ".failsafe/runs/fail_01HZX/stderr.log"
+  },
   "next": [
     { "command": "failsafe diagnose fail_01HZX", "reason": "Build a root-cause packet" }
   ],
   "token_budget": {
-    "raw_output_bytes": 48192,
-    "returned_bytes": 1260,
-    "compression_ratio": 38.2
+    "raw_output_bytes": 9231,
+    "returned_bytes": 701,
+    "compression_ratio": 13.2
   }
 }
 ```
 
-Output is capped by `config.token_budget.max_output_bytes` (default 6000). Use `--max-bytes` to override. Use `--format text` for human-readable summaries.
+Output is capped by `config.token_budget.max_output_bytes` (default 6000). Use `--max-bytes` to override. When output is truncated, `raw_paths` point to the full untruncated files on disk. Use `--format text` for human-readable summaries.
 
 ## Parsers
 
-Built-in parsers for:
+Built-in parsers (8 parsers across Python, JavaScript/TypeScript):
 
-- **Python**: tracebacks, pytest (FAILED markers, assertion introspection, test selectors)
-- **JavaScript/TypeScript**: stack traces, Jest, Vitest (expected/received, test selectors)
-- **TypeScript compiler**: `tsc` errors (TS codes, file locations)
-- **Linters**: ESLint, Biome (rule violations, file locations)
+| Language | Framework | What it extracts |
+|----------|-----------|-----------------|
+| Python | traceback | Stack frames, exception type, message |
+| Python | pytest | Test names, assertion diffs, test summary, collection errors |
+| JavaScript | stack trace | Stack frames, error type, application vs library frames |
+| JavaScript | Jest | Test names, Expected/Received diffs, test summary |
+| JavaScript | Vitest | Nested test paths, assertion diffs, test summary |
+| TypeScript | tsc | TS error codes, file:line locations, total count |
+| JavaScript | ESLint | Rule names, locations, problem count |
+| JavaScript | Biome | Rule names, locations, error count |
+
+## Security
+
+- **Command policy**: Commands are validated against an allowlist. Shell operators (`&&`, `||`, `;`, `|`) are split and each sub-command is checked. Shell metacharacters (backticks, `$(...)`, `${...}`) are blocked.
+- **Secret redaction**: 11 patterns (OpenAI, Anthropic, GitHub, AWS, HF tokens, etc.) plus 30+ sensitive env var names are redacted before storage and output.
+- **Local-first**: No cloud uploads, no telemetry, no external API calls.
 
 ## Storage
 
@@ -179,21 +198,24 @@ Instruct your coding agent:
 ```
 When a command fails, call Failsafe first:
 1. failsafe run "<command>" to capture the failure
-2. failsafe diagnose --last before opening source files
-3. failsafe repro --last before stepping through code
-4. failsafe verify --last after applying a fix
-5. failsafe resolve --last --success after confirming the fix
+2. failsafe diagnose last before opening source files
+3. failsafe repro last before stepping through code
+4. failsafe verify last after applying a fix
+5. failsafe resolve last --success after confirming the fix
 Treat Failsafe output as the compact failure context. Only request raw logs when the diagnosis lacks evidence.
 ```
+
+A Claude Code skill is included at `skills/failsafe/` — copy to `~/.claude/skills/failsafe/` or `.claude/skills/failsafe/` for automatic integration.
 
 ## Development
 
 ```bash
-bun install          # Install dependencies
-bun test             # Run tests (94 tests)
-bun run typecheck    # TypeScript check
-bun run lint         # Biome lint
-bun src/cli/index.ts # Run CLI directly
+bun install              # Install dependencies
+bun test tests/          # Run tests (163 tests)
+bun run test:e2e         # Run e2e tests against fixture projects
+bun run typecheck        # TypeScript check
+bun run lint             # Biome lint
+bun src/cli/index.ts     # Run CLI directly
 ```
 
 ## License

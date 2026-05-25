@@ -49,7 +49,9 @@ failsafe diagnose last
 | `failsafe verify <id>` | Re-run repro + original to confirm fix |
 | `failsafe explain <id>` | Combine all evidence into synthesis |
 
-### Debug stepping (Python and Node.js)
+### Debug stepping (experimental, Python/debugpy only)
+
+Debug sessions are in-memory within a single process invocation. Node.js DAP support is planned.
 
 | Command | Purpose |
 |---------|---------|
