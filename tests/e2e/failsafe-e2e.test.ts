@@ -1,17 +1,17 @@
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCommand } from "../../src/capture/runner.js";
+import { diagnose } from "../../src/diagnosis/engine.js";
 import { detectAndParse, extractPrimaryLocation } from "../../src/parsers/index.js";
+import { redactSecrets } from "../../src/security/redaction.js";
 import { FailsafeStore } from "../../src/storage/store.js";
-import { DEFAULT_CONFIG } from "../../src/types/config.js";
 import { SCHEMA_VERSION } from "../../src/types/common.js";
+import { DEFAULT_CONFIG } from "../../src/types/config.js";
+import type { FailureRecord, FailureStatus } from "../../src/types/failure.js";
 import { failureId } from "../../src/utils/id.js";
 import { computeTokenBudget } from "../../src/utils/tokens.js";
-import { redactSecrets } from "../../src/security/redaction.js";
-import { diagnose } from "../../src/diagnosis/engine.js";
-import type { FailureRecord, FailureStatus } from "../../src/types/failure.js";
 
 const PROJECT_ROOT = join(import.meta.dir, "../..");
 const PYTEST_PROJECT = join(PROJECT_ROOT, "tests/e2e/pytest_project");
@@ -74,9 +74,7 @@ async function captureFailure(command: string, cwd?: string): Promise<FailureRec
 
 describe("E2E: pytest project", () => {
 	test("captures multi-failure pytest output", async () => {
-		const record = await captureFailure(
-			`pytest ${PYTEST_PROJECT}/tests/test_buggy_calc.py -v`,
-		);
+		const record = await captureFailure(`pytest ${PYTEST_PROJECT}/tests/test_buggy_calc.py -v`);
 
 		expect(record.status).toBe("failed");
 		expect(record.exit_code).toBe(1);
@@ -99,9 +97,7 @@ describe("E2E: pytest project", () => {
 	}, 30_000);
 
 	test("diagnoses pytest failure with builtin template", async () => {
-		const record = await captureFailure(
-			`pytest ${PYTEST_PROJECT}/tests/test_buggy_calc.py -v`,
-		);
+		const record = await captureFailure(`pytest ${PYTEST_PROJECT}/tests/test_buggy_calc.py -v`);
 
 		const diag = await diagnose(record, store, DEFAULT_CONFIG);
 
@@ -111,34 +107,30 @@ describe("E2E: pytest project", () => {
 		expect(diag.summary.length).toBeGreaterThan(0);
 
 		// Should have some evidence or context
-		expect(
-			diag.evidence.length > 0 || diag.minimal_context.length > 0,
-		).toBe(true);
+		expect(diag.evidence.length > 0 || diag.minimal_context.length > 0).toBe(true);
 
 		// Should have suggested actions
 		expect(diag.suggested_next_actions.length).toBeGreaterThan(0);
 	}, 30_000);
 
 	test("token budget shows compression for large output", async () => {
-		const result = await runCommand(
-			`pytest ${PYTEST_PROJECT}/tests/ -v`,
-			{ cwd: PROJECT_ROOT },
-		);
+		const result = await runCommand(`pytest ${PYTEST_PROJECT}/tests/ -v`, { cwd: PROJECT_ROOT });
 
-		const rawBytes =
-			Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
+		const rawBytes = Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr);
 
 		// Real pytest output with 20+ tests should be substantial
 		expect(rawBytes).toBeGreaterThan(1000);
 
 		const parsed = detectAndParse(result.stdout, result.stderr, "pytest");
 		// Compact output should be much smaller than raw
-		const compactBytes = Buffer.byteLength(JSON.stringify({
-			status: "failed",
-			failure_type: parsed[0]?.failure_type,
-			summary: parsed[0]?.errors[0]?.message,
-			test_summary: parsed[0]?.test_summary,
-		}));
+		const compactBytes = Buffer.byteLength(
+			JSON.stringify({
+				status: "failed",
+				failure_type: parsed[0]?.failure_type,
+				summary: parsed[0]?.errors[0]?.message,
+				test_summary: parsed[0]?.test_summary,
+			}),
+		);
 
 		expect(compactBytes).toBeLessThan(rawBytes);
 	}, 30_000);
@@ -197,9 +189,7 @@ describe("E2E: stored failure retrieval", () => {
 	}, 30_000);
 
 	test("token_budget is persisted on saved failure", async () => {
-		const record = await captureFailure(
-			`pytest ${PYTEST_PROJECT}/tests/test_buggy_calc.py -v`,
-		);
+		const record = await captureFailure(`pytest ${PYTEST_PROJECT}/tests/test_buggy_calc.py -v`);
 
 		const retrieved = store.getFailure(record.failure_id);
 		expect(retrieved).not.toBeNull();

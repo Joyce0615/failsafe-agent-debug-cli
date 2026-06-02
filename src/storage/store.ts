@@ -269,6 +269,20 @@ export class FailsafeStore {
 	}
 
 	/**
+	 * Returns true if this failure_id has already contributed to learning.
+	 */
+	hasRecordedLearning(failureId: string): boolean {
+		return this.sqlite.hasRecordedLearning(failureId);
+	}
+
+	/**
+	 * Marks a failure_id as having contributed to learning (idempotent).
+	 */
+	markLearningRecorded(failureId: string, signatureHash: string): void {
+		this.sqlite.markLearningRecorded(failureId, signatureHash);
+	}
+
+	/**
 	 * Counts unresolved signatures with a given hash created after a date.
 	 */
 	countUnresolvedAfterDate(signatureHash: string, afterDate: string): number {

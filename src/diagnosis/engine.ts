@@ -29,6 +29,8 @@ type StoreInterface = {
 	getLearnedRuleByHash(hash: string): LearnedRule | null;
 	saveLearnedRule(rule: LearnedRule): void;
 	updateLearnedRule(ruleId: string, updates: Partial<LearnedRule>): void;
+	hasRecordedLearning(failureId: string): boolean;
+	markLearningRecorded(failureId: string, signatureHash: string): void;
 	getLatestSuccessfulFix(signatureHash: string): { resolved_at: string } | null;
 	countUnresolvedAfterDate(signatureHash: string, afterDate: string): number;
 	getFlakySignature(hash: string): import("../rules/types.js").FlakyRecord | null;
@@ -129,7 +131,12 @@ export async function diagnose(
 	}
 
 	// Step 8: Build suggested next actions
-	const nextActions = buildNextActions(failure.failure_id, failureType, primaryLocation);
+	const nextActions = buildNextActions(
+		failure.failure_id,
+		failureType,
+		primaryLocation,
+		failure.command,
+	);
 
 	// Determine severity
 	let severity = determineSeverity(failureType, allErrors);
@@ -141,7 +148,7 @@ export async function diagnose(
 
 	// Record for learning (after diagnosis)
 	if (config?.rules?.auto_learn !== false) {
-		recordFailureForLearning(store, signatureHash, allErrors, primaryLocation);
+		recordFailureForLearning(store, signatureHash, failure.failure_id, allErrors, primaryLocation);
 	}
 
 	// Check flaky
@@ -203,6 +210,7 @@ function buildNextActions(
 	failureId: string,
 	failureType: string,
 	primaryLocation?: SourceLocation,
+	command?: string,
 ): Array<{ command: string; reason: string }> {
 	const actions: Array<{ command: string; reason: string }> = [];
 
@@ -213,10 +221,12 @@ function buildNextActions(
 		});
 	}
 
-	if (primaryLocation) {
+	// Only suggest debug when the runtime is Python (only supported DAP adapter)
+	// and the failure has a primary location to break at.
+	if (primaryLocation && command && /python3?|pytest|python\s+-m/.test(command)) {
 		actions.push({
 			command: `failsafe debug ${failureId} --break primary`,
-			reason: "Inspect runtime state at the failure location",
+			reason: "Inspect runtime state at the failure location (experimental, requires debugpy)",
 		});
 	}
 

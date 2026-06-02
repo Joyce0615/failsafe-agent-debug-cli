@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { pytestParser, pythonTracebackParser } from "../../src/parsers/python.js";
 
@@ -45,9 +45,7 @@ describe("pytestParser", () => {
 		expect(result.errors.length).toBeGreaterThan(0);
 
 		// Check the FAILED test was extracted
-		const failedTest = result.errors.find(
-			(e) => e.test_name?.includes("test_missing_email"),
-		);
+		const failedTest = result.errors.find((e) => e.test_name?.includes("test_missing_email"));
 		expect(failedTest).toBeDefined();
 		expect(failedTest!.message).toContain("KeyError");
 	});

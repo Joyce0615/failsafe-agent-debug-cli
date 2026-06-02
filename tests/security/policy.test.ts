@@ -1,9 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-	getDefaultPolicy,
-	validateCommand,
-	splitShellCommands,
 	extractCommandName,
+	getDefaultPolicy,
+	splitShellCommands,
+	validateCommand,
 } from "../../src/security/policy.js";
 
 describe("validateCommand", () => {

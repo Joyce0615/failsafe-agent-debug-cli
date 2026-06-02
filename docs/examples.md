@@ -246,9 +246,9 @@ The declared rule takes priority over the builtin `assertion_mismatch` template.
 
 ---
 
-## Example 4: Debug stepping (DAP)
+## Example 4: Debug stepping (DAP, experimental)
 
-Failsafe supports interactive debugging via the Debug Adapter Protocol. Currently supported: **Python** (debugpy) and **Node.js** (inspector).
+Failsafe supports experimental interactive debugging via the Debug Adapter Protocol. Only **Python** (debugpy) has a working adapter. Node.js is recognized but its DAP adapter (`@vscode/js-debug`) is not yet wired up. Debug sessions are in-memory within a single process invocation.
 
 ### Launch a debug session
 
@@ -333,7 +333,7 @@ failsafe step --session <id> --over    → advance, get state delta
 failsafe inspect expr --session <id> "payload"  → evaluate expression
 ```
 
-**Requirements**: `pip install debugpy` for Python, Node.js built-in inspector for JS/TS.
+**Requirements**: `pip install debugpy` for Python. Node.js DAP debugging requires `@vscode/js-debug` (recognized but not yet available).
 
 ---
 
@@ -418,8 +418,8 @@ The agent gets the detected runtime, what debugger will be needed in the future,
 
 | Runtime | Adapter | Status | Debugger | Install |
 |---------|---------|--------|----------|---------|
-| Python | debugpy | Supported | debugpy | `pip install debugpy` |
-| Node.js | node-inspector | Supported | Built-in | Node.js (no extra install) |
+| Python | debugpy | Supported (experimental) | debugpy | `pip install debugpy` |
+| Node.js | — | Recognized, adapter not yet available | @vscode/js-debug | `npm install -g @vscode/js-debug` |
 | Go | — | Planned | Delve | `go install github.com/go-delve/delve/cmd/dlv@latest` |
 | Rust | — | Planned | LLDB / CodeLLDB | System package manager |
 | Java | — | Planned | JDI | JDK |

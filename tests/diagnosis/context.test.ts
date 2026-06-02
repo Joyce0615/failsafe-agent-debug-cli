@@ -1,8 +1,12 @@
-import { describe, test, expect } from "bun:test";
-import { writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { extractSourceSlice, extractTestSlice, extractRecentDiff } from "../../src/diagnosis/context.js";
+import {
+	extractRecentDiff,
+	extractSourceSlice,
+	extractTestSlice,
+} from "../../src/diagnosis/context.js";
 
 describe("extractSourceSlice", () => {
 	test("extracts lines around target line", async () => {
@@ -43,10 +47,7 @@ describe("extractTestSlice", () => {
 		const dir = join(tmpdir(), `failsafe-ctx-${Date.now()}`);
 		mkdirSync(dir, { recursive: true });
 		const file = join(dir, "test_example.py");
-		writeFileSync(
-			file,
-			'def test_foo():\n    assert True\n\ndef test_bar():\n    assert False\n',
-		);
+		writeFileSync(file, "def test_foo():\n    assert True\n\ndef test_bar():\n    assert False\n");
 
 		const slice = await extractTestSlice(file, "test_foo");
 		expect(slice).not.toBeNull();

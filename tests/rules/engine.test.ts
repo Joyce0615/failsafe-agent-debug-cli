@@ -1,7 +1,7 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { evaluateRules } from "../../src/rules/engine.js";
-import type { ParsedError } from "../../src/types/failure.js";
 import type { DeclaredRule, LearnedRule } from "../../src/rules/types.js";
+import type { ParsedError } from "../../src/types/failure.js";
 
 function makeLearnedRule(overrides?: Partial<LearnedRule>): LearnedRule {
 	return {
@@ -20,18 +20,22 @@ function makeLearnedRule(overrides?: Partial<LearnedRule>): LearnedRule {
 	};
 }
 
-const errors: ParsedError[] = [
-	{ message: "KeyError: 'email'", error_type: "KeyError" },
-];
+const errors: ParsedError[] = [{ message: "KeyError: 'email'", error_type: "KeyError" }];
 
 describe("evaluateRules", () => {
 	test("declared rule takes priority over learned rule", () => {
-		const declared: DeclaredRule[] = [{
-			id: "team-rule",
-			pattern: { error_type: "KeyError" },
-			diagnosis: { category: "team_key_error", explanation: "Team knows this", enforcement: "suggest" },
-			confidence: 0.95,
-		}];
+		const declared: DeclaredRule[] = [
+			{
+				id: "team-rule",
+				pattern: { error_type: "KeyError" },
+				diagnosis: {
+					category: "team_key_error",
+					explanation: "Team knows this",
+					enforcement: "suggest",
+				},
+				confidence: 0.95,
+			},
+		];
 		const store = {
 			getLearnedRuleByHash: () => makeLearnedRule(),
 		};
@@ -84,9 +88,7 @@ describe("evaluateRules", () => {
 	});
 
 	test("returns null for unrecognized errors", () => {
-		const unknownErrors: ParsedError[] = [
-			{ message: "Something completely unknown happened" },
-		];
+		const unknownErrors: ParsedError[] = [{ message: "Something completely unknown happened" }];
 		const store = { getLearnedRuleByHash: () => null };
 
 		const result = evaluateRules(unknownErrors, [], "xyz", store, []);

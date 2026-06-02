@@ -585,6 +585,22 @@ export class FailsafeSqlite {
 		this.db.run("UPDATE signatures SET signature_hash = ? WHERE failure_id = ?", [hash, failureId]);
 	}
 
+	/** Returns true if this failure_id has already been counted toward learning. */
+	hasRecordedLearning(failureId: string): boolean {
+		const row = this.db
+			.query("SELECT 1 FROM learning_ledger WHERE failure_id = ?")
+			.get(failureId) as unknown;
+		return row != null;
+	}
+
+	/** Mark a failure_id as having contributed to learning (idempotent). */
+	markLearningRecorded(failureId: string, signatureHash: string): void {
+		this.db.run(
+			"INSERT OR IGNORE INTO learning_ledger (failure_id, signature_hash, recorded_at) VALUES (?, ?, ?)",
+			[failureId, signatureHash, new Date().toISOString()],
+		);
+	}
+
 	countUnresolvedAfterDate(signatureHash: string, afterDate: string): number {
 		const row = this.db
 			.query(

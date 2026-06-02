@@ -170,6 +170,19 @@ export const MIGRATIONS: Migration[] = [
 			CREATE INDEX IF NOT EXISTS idx_signatures_hash ON signatures(signature_hash);
 		`,
 	},
+	{
+		version: 3,
+		name: "learning_ledger",
+		up: `
+			CREATE TABLE IF NOT EXISTS learning_ledger (
+				failure_id TEXT PRIMARY KEY,
+				signature_hash TEXT NOT NULL,
+				recorded_at TEXT NOT NULL
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_learning_ledger_hash ON learning_ledger(signature_hash);
+		`,
+	},
 ];
 
 export function runMigrations(db: Database): void {

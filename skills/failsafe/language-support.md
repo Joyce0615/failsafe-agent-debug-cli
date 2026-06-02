@@ -17,14 +17,16 @@
 
 | Runtime | Status | Debugger | Install |
 |---------|--------|----------|---------|
-| Python | **Supported** | debugpy | `pip install debugpy` |
-| Node.js | **Supported** | Built-in inspector | (no install needed) |
+| Python | **Supported** (experimental) | debugpy | `pip install debugpy` |
+| Node.js | Recognized, adapter not yet available | @vscode/js-debug | `npm install -g @vscode/js-debug` |
 | Go | Recognized, not yet supported | Delve | `go install github.com/go-delve/delve/cmd/dlv@latest` |
 | Rust | Recognized, not yet supported | LLDB / CodeLLDB | System package manager |
 | Java | Recognized, not yet supported | JDI | JDK |
 | .NET | Recognized, not yet supported | netcoredbg | Samsung/netcoredbg |
 
-When you attempt `failsafe debug` on an unsupported runtime, Failsafe returns a structured JSON packet with the detected runtime, what debugger will be needed, and fallback commands (`diagnose`, `repro`) that work without a debugger.
+Only **Python (debugpy)** has a working DAP adapter. Plain `node` does not speak the DAP protocol; Node.js debugging requires a dedicated adapter like `@vscode/js-debug`, which is recognized but not yet wired up.
+
+When you attempt `failsafe debug` on a runtime without an available adapter, Failsafe returns a structured JSON packet with the detected runtime, the adapter that will be needed, and fallback commands (`diagnose`, `repro`) that work without a debugger.
 
 ## Diagnosis Templates (12 builtin rules)
 

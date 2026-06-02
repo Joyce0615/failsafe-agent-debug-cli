@@ -1,9 +1,9 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-	extractPytestSelector,
 	extractJestSelector,
-	extractVitestSelector,
+	extractPytestSelector,
 	extractSelector,
+	extractVitestSelector,
 } from "../../src/repro/selectors.js";
 import type { ParsedError } from "../../src/types/failure.js";
 
@@ -138,9 +138,7 @@ describe("extractJestSelector", () => {
 	});
 
 	test("falls back to file-level selector", () => {
-		const errors: ParsedError[] = [
-			{ message: "Error", test_file: "auth.test.ts" },
-		];
+		const errors: ParsedError[] = [{ message: "Error", test_file: "auth.test.ts" }];
 		const sel = extractJestSelector(errors, "jest");
 		expect(sel).not.toBeNull();
 		expect(sel!.command).toBe("jest auth.test.ts --no-coverage");

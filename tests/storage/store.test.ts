@@ -1,11 +1,11 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FailsafeStore } from "../../src/storage/store.js";
+import { SCHEMA_VERSION } from "../../src/types/common.js";
 import { DEFAULT_CONFIG } from "../../src/types/config.js";
 import type { FailureRecord } from "../../src/types/failure.js";
-import { SCHEMA_VERSION } from "../../src/types/common.js";
 
 let store: FailsafeStore;
 let tempDir: string;

@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { redactSecrets, redactEnvVars } from "../../src/security/redaction.js";
+import { describe, expect, test } from "bun:test";
+import { redactEnvVars, redactSecrets } from "../../src/security/redaction.js";
 
 describe("redactSecrets", () => {
 	test("redacts OpenAI API keys", () => {

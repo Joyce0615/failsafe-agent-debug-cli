@@ -1,5 +1,6 @@
 import { runCommand } from "../capture/runner.js";
 import { detectAndParse } from "../parsers/index.js";
+import { getDefaultPolicy, validateCommand } from "../security/policy.js";
 import type { FailureSignature } from "../types/repro.js";
 import { computeSignature } from "./signatures.js";
 import { signaturesMatch } from "./signatures.js";
@@ -17,6 +18,18 @@ export async function verifyRepro(
 	originalSignature: FailureSignature,
 	options: { timeout_ms?: number; cwd?: string } = {},
 ): Promise<VerifyResult> {
+	// Re-validate the command against policy before execution
+	const policy = getDefaultPolicy();
+	const validation = validateCommand(candidateCommand, policy);
+	if (!validation.allowed) {
+		return {
+			verified: false,
+			exit_code: null,
+			duration_ms: 0,
+			reason: `Command blocked by policy: ${validation.reason}`,
+		};
+	}
+
 	const result = await runCommand(candidateCommand, {
 		cwd: options.cwd,
 		timeout_ms: options.timeout_ms ?? 60_000,

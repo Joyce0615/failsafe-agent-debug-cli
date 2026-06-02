@@ -17,6 +17,7 @@ export const nodeInspectorAdapter: AdapterInfo = {
 	transport: "stdio",
 	command: "node",
 	args: [],
+	ready: false,
 	installHint:
 		"Node.js DAP debugging requires @vscode/js-debug. Install: npm install -g @vscode/js-debug",
 

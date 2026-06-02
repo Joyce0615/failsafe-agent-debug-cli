@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { checkRuntimeCapability } from "../../src/debug/adapters/index.js";
 import { detectRuntime } from "../../src/debug/launch.js";
 
@@ -12,11 +12,15 @@ describe("checkRuntimeCapability", () => {
 		}
 	});
 
-	test("node is supported", () => {
-		const result = checkRuntimeCapability("node");
-		expect(result.supported).toBe(true);
-		if (result.supported) {
+	test("node is recognized but adapter not yet available", () => {
+		const result = checkRuntimeCapability("node", "fail_123");
+		expect(result.supported).toBe(false);
+		if (!result.supported) {
 			expect(result.runtime).toBe("node");
+			expect(result.reason).toContain("not yet available");
+			expect(result.future_debugger).toBe("@vscode/js-debug");
+			expect(result.install_hint).toContain("js-debug");
+			expect(result.next_best.length).toBeGreaterThan(0);
 		}
 	});
 
@@ -25,7 +29,7 @@ describe("checkRuntimeCapability", () => {
 		expect(result.supported).toBe(false);
 		if (!result.supported) {
 			expect(result.runtime).toBe("go");
-			expect(result.reason).toContain("not yet supported");
+			expect(result.reason).toContain("not yet available");
 			expect(result.future_debugger).toBe("Delve");
 			expect(result.install_hint).toContain("dlv");
 			expect(result.next_best.length).toBeGreaterThan(0);

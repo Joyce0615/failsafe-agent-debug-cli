@@ -1,10 +1,10 @@
 {
-  "name": "failsafe-node-demo",
-  "private": true,
-  "scripts": {
-    "test": "jest"
-  },
-  "devDependencies": {
-    "jest": "^29.0.0"
-  }
+	"name": "failsafe-node-demo",
+	"private": true,
+	"scripts": {
+		"test": "jest"
+	},
+	"devDependencies": {
+		"jest": "^29.0.0"
+	}
 }

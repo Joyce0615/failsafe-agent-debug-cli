@@ -6,6 +6,7 @@ export const debugpyAdapter: AdapterInfo = {
 	transport: "stdio",
 	command: "python3",
 	args: ["-m", "debugpy.adapter"],
+	ready: true,
 	installHint: "pip install debugpy",
 
 	async isAvailable(): Promise<boolean> {

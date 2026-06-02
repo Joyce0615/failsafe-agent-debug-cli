@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { runCommand } from "../capture/runner.js";
 import { detectAndParse } from "../parsers/index.js";
 import { computeSignature, signaturesMatch } from "../repro/signatures.js";
+import { loadPolicy, validateCommand } from "../security/policy.js";
 import { outputResult } from "./format.js";
 import { initCommand, resolveFailureId } from "./shared.js";
 
@@ -29,41 +30,65 @@ export function registerVerifyCommand(program: Command): void {
 			}
 
 			const repro = store.getRepro(failureId);
+			const policy = loadPolicy(config);
 			const checks: Array<{
 				kind: string;
 				command: string;
-				status: "passed" | "failed" | "error";
+				status: "passed" | "failed" | "error" | "blocked";
 				duration_ms: number;
 				message?: string;
 			}> = [];
 
-			// Run the minimal repro first (faster)
+			// Run the minimal repro first (faster), re-validating policy
 			if (repro && repro.status === "verified") {
-				const reproResult = await runCommand(repro.command, {
+				const reproValidation = validateCommand(repro.command, policy);
+				if (!reproValidation.allowed) {
+					checks.push({
+						kind: "minimal_repro",
+						command: repro.command,
+						status: "blocked",
+						duration_ms: 0,
+						message: `Repro command blocked by policy: ${reproValidation.reason}`,
+					});
+				} else {
+					const reproResult = await runCommand(repro.command, {
+						cwd: failure.cwd,
+						timeout_ms: timeoutMs,
+					});
+					checks.push({
+						kind: "minimal_repro",
+						command: repro.command,
+						status: reproResult.exit_code === 0 ? "passed" : "failed",
+						duration_ms: reproResult.duration_ms,
+						message:
+							reproResult.exit_code !== 0 ? "Minimal repro still fails after fix" : undefined,
+					});
+				}
+			}
+
+			// Re-validate the original command against policy before execution
+			const origValidation = validateCommand(failure.command, policy);
+			if (!origValidation.allowed) {
+				checks.push({
+					kind: "original_command",
+					command: failure.command,
+					status: "blocked",
+					duration_ms: 0,
+					message: `Original command blocked by policy: ${origValidation.reason}`,
+				});
+			} else {
+				const originalResult = await runCommand(failure.command, {
 					cwd: failure.cwd,
 					timeout_ms: timeoutMs,
 				});
 				checks.push({
-					kind: "minimal_repro",
-					command: repro.command,
-					status: reproResult.exit_code === 0 ? "passed" : "failed",
-					duration_ms: reproResult.duration_ms,
-					message: reproResult.exit_code !== 0 ? "Minimal repro still fails after fix" : undefined,
+					kind: "original_command",
+					command: failure.command,
+					status: originalResult.exit_code === 0 ? "passed" : "failed",
+					duration_ms: originalResult.duration_ms,
+					message: originalResult.exit_code !== 0 ? "Original command still fails" : undefined,
 				});
 			}
-
-			// Run the original command
-			const originalResult = await runCommand(failure.command, {
-				cwd: failure.cwd,
-				timeout_ms: timeoutMs,
-			});
-			checks.push({
-				kind: "original_command",
-				command: failure.command,
-				status: originalResult.exit_code === 0 ? "passed" : "failed",
-				duration_ms: originalResult.duration_ms,
-				message: originalResult.exit_code !== 0 ? "Original command still fails" : undefined,
-			});
 
 			const allPassed = checks.every((c) => c.status === "passed");
 

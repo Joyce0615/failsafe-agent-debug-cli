@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { TEMPLATES } from "../../src/diagnosis/templates.js";
 import type { ParsedError } from "../../src/types/failure.js";
 
@@ -13,18 +13,14 @@ describe("diagnosis templates", () => {
 	});
 
 	test("matches key_error for KeyError", () => {
-		const errors: ParsedError[] = [
-			{ message: "KeyError: 'email'", error_type: "KeyError" },
-		];
+		const errors: ParsedError[] = [{ message: "KeyError: 'email'", error_type: "KeyError" }];
 		const template = TEMPLATES.find((t) => t.match(errors));
 		expect(template).toBeDefined();
 		expect(template!.category).toBe("key_error");
 	});
 
 	test("matches import_error for ModuleNotFoundError", () => {
-		const errors: ParsedError[] = [
-			{ message: "ModuleNotFoundError: No module named 'flask'" },
-		];
+		const errors: ParsedError[] = [{ message: "ModuleNotFoundError: No module named 'flask'" }];
 		const template = TEMPLATES.find((t) => t.match(errors));
 		expect(template).toBeDefined();
 		expect(template!.category).toBe("import_error");
@@ -62,7 +58,11 @@ describe("diagnosis templates", () => {
 
 	test("diagnosis includes evidence", () => {
 		const errors: ParsedError[] = [
-			{ message: "KeyError: 'email'", error_type: "KeyError", location: { file: "src/auth.py", line: 42 } },
+			{
+				message: "KeyError: 'email'",
+				error_type: "KeyError",
+				location: { file: "src/auth.py", line: 42 },
+			},
 		];
 		const template = TEMPLATES.find((t) => t.match(errors))!;
 		const result = template.diagnose(errors, []);

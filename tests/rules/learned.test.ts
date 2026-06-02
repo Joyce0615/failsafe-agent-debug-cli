@@ -1,21 +1,17 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { computeSignatureHash } from "../../src/rules/learned.js";
 import type { ParsedError } from "../../src/types/failure.js";
 
 describe("computeSignatureHash", () => {
 	test("produces consistent hash for same errors", () => {
-		const errors: ParsedError[] = [
-			{ message: "KeyError: 'email'", error_type: "KeyError" },
-		];
+		const errors: ParsedError[] = [{ message: "KeyError: 'email'", error_type: "KeyError" }];
 		const hash1 = computeSignatureHash(errors);
 		const hash2 = computeSignatureHash(errors);
 		expect(hash1).toBe(hash2);
 	});
 
 	test("produces 16-character hex hash", () => {
-		const errors: ParsedError[] = [
-			{ message: "KeyError: 'email'", error_type: "KeyError" },
-		];
+		const errors: ParsedError[] = [{ message: "KeyError: 'email'", error_type: "KeyError" }];
 		const hash = computeSignatureHash(errors);
 		expect(hash.length).toBe(16);
 		expect(/^[0-9a-f]{16}$/.test(hash)).toBe(true);

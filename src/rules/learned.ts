@@ -77,19 +77,31 @@ export type LearnedRuleStore = {
 	getLearnedRuleByHash(hash: string): LearnedRule | null;
 	saveLearnedRule(rule: LearnedRule): void;
 	updateLearnedRule(ruleId: string, updates: Partial<LearnedRule>): void;
+	hasRecordedLearning(failureId: string): boolean;
+	markLearningRecorded(failureId: string, signatureHash: string): void;
 };
 
 /**
- * Record a failure occurrence for learning purposes.
- * If a rule with this hash exists, increment its occurrence_count and update metadata.
- * Otherwise, create a new learned rule with initial values.
+ * Record a failure occurrence for learning purposes — idempotent per failure_id.
+ *
+ * Each distinct failure_id contributes at most one occurrence. Re-diagnosing
+ * the same failure does not inflate occurrence_count. If a rule with this hash
+ * exists, increment its occurrence_count; otherwise create a new learned rule.
+ *
+ * @returns true if a new occurrence was recorded, false if already counted.
  */
 export function recordFailureForLearning(
 	store: LearnedRuleStore,
 	signatureHash: string,
+	failureId: string,
 	errors: ParsedError[],
 	primaryLocation?: SourceLocation,
-): void {
+): boolean {
+	// Idempotency guard: this failure_id has already been counted.
+	if (store.hasRecordedLearning(failureId)) {
+		return false;
+	}
+
 	const existing = store.getLearnedRuleByHash(signatureHash);
 	const now = new Date().toISOString();
 
@@ -136,6 +148,10 @@ export function recordFailureForLearning(
 
 		store.saveLearnedRule(newRule);
 	}
+
+	// Mark this failure_id as counted so re-diagnosis is idempotent.
+	store.markLearningRecorded(failureId, signatureHash);
+	return true;
 }
 
 /**

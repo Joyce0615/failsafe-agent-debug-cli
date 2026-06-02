@@ -92,7 +92,7 @@ export function registerRunCommand(program: Command): void {
 			}
 
 			if (status !== "passed") {
-				output.next = buildNextActions(id, parsed[0]?.failure_type);
+				output.next = buildNextActions(id, parsed[0]?.failure_type, command, !!primaryLocation);
 			}
 
 			if (allMatches.length > 0) {
@@ -128,12 +128,15 @@ export function registerRunCommand(program: Command): void {
 			// Save to store — returns actual artifact paths on disk
 			const artifactPaths = store.saveRun(record, redactedStdout, redactedStderr, redactedCombined);
 
-			// Always include raw_paths so agents can fetch full output on demand
-			output.raw_paths = {
-				stdout: artifactPaths.stdout_path,
-				stderr: artifactPaths.stderr_path,
-				combined: artifactPaths.combined_path,
-			};
+			// Include raw_paths so agents can fetch full output on demand,
+			// unless explicitly disabled via config.token_budget.include_raw_paths.
+			if (config.token_budget.include_raw_paths !== false) {
+				output.raw_paths = {
+					stdout: artifactPaths.stdout_path,
+					stderr: artifactPaths.stderr_path,
+					combined: artifactPaths.combined_path,
+				};
+			}
 
 			if (opts.raw) {
 				// Cap raw output per-field to half the byte limit (split between stdout/stderr)
@@ -168,6 +171,8 @@ export function registerRunCommand(program: Command): void {
 function buildNextActions(
 	id: string,
 	failureType?: string,
+	command?: string,
+	hasPrimaryLocation?: boolean,
 ): Array<{ command: string; reason: string }> {
 	const actions = [
 		{
@@ -183,10 +188,14 @@ function buildNextActions(
 		});
 	}
 
-	actions.push({
-		command: `failsafe debug ${id} --break primary`,
-		reason: "Inspect runtime state at failure line",
-	});
+	// Only suggest debug when the runtime is Python (the only supported
+	// DAP adapter) and the failure has a primary location to break at.
+	if (hasPrimaryLocation && command && /python3?|pytest|python\s+-m/.test(command)) {
+		actions.push({
+			command: `failsafe debug ${id} --break primary`,
+			reason: "Inspect runtime state at failure line (experimental, requires debugpy)",
+		});
+	}
 
 	return actions;
 }

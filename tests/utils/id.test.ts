@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
-import { failureId, diagnosisId, reproId, debugId } from "../../src/utils/id.js";
+import { describe, expect, test } from "bun:test";
+import { debugId, diagnosisId, failureId, reproId } from "../../src/utils/id.js";
 
 describe("id generation", () => {
 	test("failureId has correct prefix", () => {
