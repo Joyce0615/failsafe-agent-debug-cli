@@ -18,13 +18,14 @@ export function registerInitCommand(program: Command): void {
 				config.token_budget.max_output_bytes,
 			);
 			const cwd = process.cwd();
-			const paths = resolveConfigPaths(cwd, DEFAULT_CONFIG);
+			const paths = resolveConfigPaths(cwd, config);
 
-			// Create directories
+			// Create the config anchor dir and the storage dirs (which may differ)
+			mkdirSync(paths.configDir, { recursive: true });
 			mkdirSync(paths.storageDir, { recursive: true });
 			mkdirSync(paths.runsDir, { recursive: true });
 
-			// Write default config
+			// Write default config to the fixed anchor if not present
 			if (!existsSync(paths.configFile)) {
 				writeFileSync(paths.configFile, JSON.stringify(DEFAULT_CONFIG, null, 2));
 			}

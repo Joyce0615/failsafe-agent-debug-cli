@@ -6,7 +6,7 @@
  * the output contracts that agents rely on.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -155,6 +155,30 @@ describe("CLI contract: config", () => {
 		expect(data.schema_version).toBe("0.1");
 		expect(data.default_format).toBeDefined();
 	});
+
+	test("config set storage_dir relocates storage but keeps config anchor", async () => {
+		const ws = mkdtempSync(join(tmpdir(), "failsafe-storedir-"));
+		await run(["init"], { cwd: ws });
+
+		// Relocate storage to a custom subdirectory
+		const setR = await run(["config", "set", "storage_dir", "custom-store"], { cwd: ws });
+		expect(setR.exitCode).toBe(0);
+
+		// Config file remains at the fixed .failsafe anchor
+		expect(existsSync(join(ws, ".failsafe", "config.json"))).toBe(true);
+
+		// config show reads the anchored config and reflects the new storage_dir
+		const showR = await run(["config", "show"], { cwd: ws });
+		const cfg = showR.json as Record<string, unknown>;
+		expect(cfg.storage_dir).toBe("custom-store");
+
+		// A subsequent run stores its data under the relocated storage dir
+		await run(["run", 'node -e "process.exit(1)"'], { cwd: ws });
+		expect(existsSync(join(ws, "custom-store", "history.sqlite"))).toBe(true);
+		expect(existsSync(join(ws, "custom-store", "runs"))).toBe(true);
+
+		rmSync(ws, { recursive: true, force: true });
+	}, 30_000);
 });
 
 describe("CLI contract: rules", () => {

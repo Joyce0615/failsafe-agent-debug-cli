@@ -75,14 +75,33 @@ export const DEFAULT_CONFIG: FailsafeConfig = FailsafeConfigSchema.parse({
 	schema_version: "0.1",
 });
 
+/**
+ * Resolve filesystem paths for a workspace.
+ *
+ * Config is ANCHORED at `<cwd>/.failsafe/config.json` — a fixed bootstrap
+ * location that does not move when `storage_dir` changes. This is where
+ * `loadConfig()`, `init`, and `config show/set` always read and write.
+ *
+ * Storage (runs, history db, code index) follows `config.storage_dir`,
+ * which may be absolute or relative to cwd. This lets a team relocate
+ * captured data (e.g. to a shared cache) without losing the config anchor.
+ */
 export function resolveConfigPaths(cwd: string, config: FailsafeConfig) {
+	// Fixed config anchor — never moves with storage_dir.
+	const configDir = `${cwd}/.failsafe`;
+	const configFile = `${configDir}/config.json`;
+
+	// Storage location — controlled by storage_dir (absolute or cwd-relative).
 	const storageDir = config.storage_dir.startsWith("/")
 		? config.storage_dir
 		: `${cwd}/${config.storage_dir}`;
+
 	return {
+		configDir,
+		configFile,
 		storageDir,
-		configFile: `${storageDir}/config.json`,
 		runsDir: `${storageDir}/runs`,
 		historyDb: `${storageDir}/history.sqlite`,
+		codeIndexDir: `${storageDir}/code-index`,
 	};
 }
