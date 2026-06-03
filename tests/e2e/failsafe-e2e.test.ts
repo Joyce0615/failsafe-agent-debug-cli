@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCommand } from "../../src/capture/runner.js";
@@ -136,7 +136,13 @@ describe("E2E: pytest project", () => {
 	}, 30_000);
 });
 
-describe("E2E: Node.js/Jest project", () => {
+// The Node fixture requires `bun install` (gitignored node_modules).
+// Run `bun run setup:fixtures` or `bun run test:e2e` to install it.
+// If the fixture isn't installed, skip these tests rather than fail.
+const jestInstalled = existsSync(join(NODE_PROJECT, "node_modules/.bin/jest"));
+const describeNode = jestInstalled ? describe : describe.skip;
+
+describeNode("E2E: Node.js/Jest project", () => {
 	test("captures Jest failure output", async () => {
 		const result = await runCommand(
 			`./node_modules/.bin/jest --config='{}' --testMatch='**/*.fixture-test.js'`,

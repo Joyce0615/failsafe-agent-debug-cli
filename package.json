@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "bun src/cli/index.ts",
     "test": "bun test tests/",
-    "test:e2e": "bun test tests/e2e/",
+    "setup:fixtures": "bun scripts/setup-fixtures.ts",
+    "test:e2e": "bun scripts/setup-fixtures.ts && bun test tests/e2e/",
     "lint": "bunx biome check src/",
     "format": "bunx biome format --write src/",
     "typecheck": "bunx tsc --noEmit"
