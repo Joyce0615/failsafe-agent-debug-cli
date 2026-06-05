@@ -56,15 +56,15 @@ All commands output JSON by default. Use `--format text` for human-readable outp
 
 ### Debug (experimental)
 
-Debug stepping requires a DAP adapter. Currently supported: **Python** (debugpy). Node.js DAP support is planned.
+`failsafe debug <id>` emits **launch guidance** — a ready-to-run `debugpy` command and breakpoint location for an interactive debugger you attach from your editor/IDE. It does not manage a live session. Currently only **Python** (debugpy) has a working adapter; Node.js DAP support is planned (`@vscode/js-debug`).
 
 | Command | Description |
 |---------|-------------|
-| `failsafe debug <id>` | Launch debugger at failure location |
-| `failsafe step --session <id>` | Step through execution, return state deltas |
-| `failsafe inspect vars\|stack\|expr\|source` | Inspect runtime state in a debug session |
+| `failsafe debug <id>` | Emit a `debugpy` launch command + breakpoint for interactive debugging |
+| `failsafe step --session <id>` | (experimental) In-process stepping; does not persist across invocations |
+| `failsafe inspect vars\|stack\|expr\|source` | (experimental) In-process inspection; does not persist across invocations |
 
-Debug sessions are in-memory within a single process. The `step` and `inspect` commands require an active session started by `debug` in the same invocation. For unsupported runtimes (Go, Rust, Java, .NET), Failsafe returns a structured packet with the future debugger name and fallback commands.
+Debug sessions are in-memory within a single process, so `step` and `inspect` cannot reconnect from a separate CLI invocation — they return a structured `debug_unavailable` packet. For unsupported runtimes (Node.js, Go, Rust, Java, .NET), `failsafe debug` returns a structured packet naming the needed adapter and fallback commands (`diagnose`, `repro`).
 
 ### Tiered Rules
 

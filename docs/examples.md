@@ -246,11 +246,11 @@ The declared rule takes priority over the builtin `assertion_mismatch` template.
 
 ---
 
-## Example 4: Debug stepping (DAP, experimental)
+## Example 4: Debug launch guidance (experimental)
 
-Failsafe supports experimental interactive debugging via the Debug Adapter Protocol. Only **Python** (debugpy) has a working adapter. Node.js is recognized but its DAP adapter (`@vscode/js-debug`) is not yet wired up. Debug sessions are in-memory within a single process invocation.
+`failsafe debug` emits **launch guidance** for an interactive debugger rather than managing a live session. Only **Python** (debugpy) has a working adapter. Node.js is recognized but its DAP adapter (`@vscode/js-debug`) is not yet wired up.
 
-### Launch a debug session
+### Get launch guidance
 
 ```
 $ failsafe debug fail_abc123 --break primary
@@ -258,80 +258,36 @@ $ failsafe debug fail_abc123 --break primary
 
 ```json
 {
-  "debug_session_id": "dbg_xyz789",
+  "mode": "launch_guidance",
   "runtime": "python",
   "adapter": "debugpy",
-  "status": "paused",
-  "pause_reason": "breakpoint",
-  "location": { "file": "src/auth.py", "line": 42, "symbol": "validateUser" },
+  "breakpoint": { "file": "src/auth.py", "line": 42 },
+  "launch_command": "python3 -m debugpy --listen 127.0.0.1:5678 --wait-for-client -m pytest tests/test_auth.py::test_missing_email -x",
+  "instructions": [
+    "Set a breakpoint at src/auth.py:42 in your editor or via 'breakpoint()'.",
+    "Run: python3 -m debugpy --listen 127.0.0.1:5678 --wait-for-client -m pytest tests/test_auth.py::test_missing_email -x",
+    "Attach a DAP client / IDE to 127.0.0.1:5678 (e.g. VS Code 'Python: Remote Attach')."
+  ],
+  "note": "Failsafe does not maintain interactive debug sessions across CLI invocations. The 'step' and 'inspect' commands are experimental and only operate within a single process.",
   "source_context": "40: def validateUser(user):\n41:     email = user.email\n42:     normalized = email.lower()\n43:     return normalized",
   "next": [
-    { "command": "failsafe inspect vars --session dbg_xyz789", "reason": "Read local variables" },
-    { "command": "failsafe step --session dbg_xyz789 --over", "reason": "Advance and report changed state" }
+    { "command": "failsafe diagnose fail_abc123", "reason": "Get a root-cause diagnosis without launching a debugger" }
   ]
 }
 ```
 
-### Inspect variables
-
-```
-$ failsafe inspect vars --session dbg_xyz789
-```
-
-```json
-{
-  "kind": "variables",
-  "variables": [
-    { "name": "user", "type": "User", "value": "{'id': '42', 'email': None}" },
-    { "name": "email", "type": "NoneType", "value": "None" }
-  ]
-}
-```
-
-### Step and see state deltas
-
-```
-$ failsafe step --session dbg_xyz789 --over --count 3 --summary delta
-```
-
-```json
-{
-  "step": { "kind": "over", "count": 3 },
-  "status": "paused",
-  "location": { "file": "src/auth.py", "line": 45 },
-  "state_delta": [
-    { "name": "email", "before": "undefined", "after": "undefined", "note": "Still undefined after normalization branch" },
-    { "name": "result", "before": "uninitialized", "after": "not reached" }
-  ],
-  "interpretation": "Advanced from line 42 to line 45. Changed: email (undefined -> undefined)"
-}
-```
-
-### Evaluate an expression
-
-```
-$ failsafe inspect expr --session dbg_xyz789 "user.__dict__"
-```
-
-```json
-{
-  "kind": "expression",
-  "expression": "user.__dict__",
-  "value": "{'id': '42', 'name': 'ghost', 'email': None, 'role': 'member'}",
-  "summary": "User object has email=None"
-}
-```
-
-### Full debug workflow
+### Recommended agent loop
 
 ```
 failsafe run "pytest tests/"           → compact failure packet
+failsafe diagnose <id>                 → root cause + evidence + source context
 failsafe repro <id>                    → single test selector
-failsafe debug <id> --break primary    → pause at failure line
-failsafe inspect vars --session <id>   → see local variables
-failsafe step --session <id> --over    → advance, get state delta
-failsafe inspect expr --session <id> "payload"  → evaluate expression
+failsafe debug <id> --break primary    → launch command for interactive debugging (optional)
+failsafe verify <id>                   → confirm the fix
+failsafe resolve <id> --success        → record for learning
 ```
+
+`step` and `inspect` are experimental, in-process only, and return a `debug_unavailable` packet when invoked separately. Prefer `diagnose`/`repro` for the autonomous loop.
 
 **Requirements**: `pip install debugpy` for Python. Node.js DAP debugging requires `@vscode/js-debug` (recognized but not yet available).
 

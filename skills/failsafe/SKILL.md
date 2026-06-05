@@ -49,17 +49,15 @@ failsafe diagnose last
 | `failsafe verify <id>` | Re-run repro + original to confirm fix |
 | `failsafe explain <id>` | Combine all evidence into synthesis |
 
-### Debug stepping (experimental, Python/debugpy only)
+### Debug (experimental, Python/debugpy only)
 
-Debug sessions are in-memory within a single process invocation. Node.js DAP support is planned.
+`failsafe debug <id>` emits launch guidance: a ready-to-run `debugpy` command plus the breakpoint location. Attach an IDE/DAP client to debug interactively. Failsafe does NOT manage a live debug session across CLI invocations. Node.js DAP support is planned (`@vscode/js-debug`).
 
 | Command | Purpose |
 |---------|---------|
-| `failsafe debug <id> --break primary` | Launch debugger at failure point |
-| `failsafe step --session <id> --over` | Step over, return state deltas |
-| `failsafe inspect vars --session <id>` | Read local variables |
-| `failsafe inspect expr --session <id> "<expr>"` | Evaluate expression |
-| `failsafe inspect stack --session <id>` | View call stack |
+| `failsafe debug <id> --break primary` | Emit a `debugpy` launch command + breakpoint |
+
+`step` and `inspect` are experimental, in-process only, and return a `debug_unavailable` packet when invoked separately. Prefer `diagnose` and `repro` for the agent loop.
 
 ### Knowledge base
 
