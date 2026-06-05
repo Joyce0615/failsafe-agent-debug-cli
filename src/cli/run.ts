@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { runCommand } from "../capture/runner.js";
 import { detectAndParse, extractPrimaryLocation } from "../parsers/index.js";
-import { loadPolicy, validateCommand } from "../security/policy.js";
+import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { redactSecrets } from "../security/redaction.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 import type { FailureRecord, FailureStatus } from "../types/failure.js";
@@ -19,6 +19,7 @@ export function registerRunCommand(program: Command): void {
 		.option("--timeout <seconds>", "Command timeout in seconds", "120")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--raw", "Include raw output in response")
+		.option("--shell", "Run via 'sh -c' to allow shell syntax (operators, globs, pipes)")
 		.option("--no-policy", "Skip command safety policy check")
 		.action(async (command: string, opts) => {
 			const config = loadConfig();
@@ -44,9 +45,33 @@ export function registerRunCommand(program: Command): void {
 				}
 			}
 
-			// Run the command
+			// Decide execution mode: argv-first (safe) vs shell.
+			// Simple commands run directly without a shell. Shell syntax
+			// (operators, globs, redirects, variable expansion) requires an
+			// explicit --shell flag, unless --no-policy is set.
 			const timeoutMs = Number.parseInt(opts.timeout, 10) * 1000;
-			const result = await runCommand(command, { timeout_ms: timeoutMs });
+			let argv: string[] | undefined;
+			if (opts.shell || opts.policy === false) {
+				// Explicit shell mode (or policy bypassed): use sh -c.
+				argv = undefined;
+			} else {
+				const parsed = parseToArgv(command);
+				if (parsed.kind === "needs_shell") {
+					outputResult(
+						{
+							error: true,
+							needs_shell: true,
+							message: `${parsed.reason}. Re-run with --shell to allow shell syntax, or simplify the command.`,
+							command,
+						},
+						outOpts,
+					);
+					process.exit(1);
+				}
+				argv = parsed.argv;
+			}
+
+			const result = await runCommand(command, { timeout_ms: timeoutMs, argv });
 
 			// Redact secrets from output
 			const { redacted: redactedStdout, matched: stdoutMatches } = redactSecrets(result.stdout);

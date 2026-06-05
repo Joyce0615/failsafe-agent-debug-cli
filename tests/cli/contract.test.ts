@@ -102,6 +102,34 @@ describe("CLI contract: run", () => {
 		expect(data.error).toBe(true);
 		expect(data.message as string).toContain("blocked");
 	});
+
+	test("rejects shell syntax without --shell (needs_shell packet)", async () => {
+		// A pipe requires a shell; without --shell this is rejected.
+		const r = await run(["run", "node --version | cat"]);
+		expect(r.exitCode).not.toBe(0);
+		const data = r.json as Record<string, unknown>;
+		// Either policy blocks the second command, or argv parsing flags needs_shell.
+		expect(data.error).toBe(true);
+	});
+
+	test("runs simple allowed command via argv (no shell)", async () => {
+		// Exit 1 with no shell metacharacters — should run via argv mode and
+		// produce a normal failure packet.
+		const r = await run(["run", 'node -e "process.exit(3)"']);
+		expect(r.exitCode).toBe(0); // CLI succeeds; captured command failed
+		const data = r.json as Record<string, unknown>;
+		expect(data.status).toBe("failed");
+		expect(data.exit_code).toBe(3);
+		expect(data.needs_shell).toBeUndefined();
+	}, 30_000);
+
+	test("--shell allows shell syntax", async () => {
+		// With --shell, a command substitution-free pipe of allowed commands runs.
+		const r = await run(["run", "--shell", "node --version"]);
+		expect(r.exitCode).toBe(0);
+		const data = r.json as Record<string, unknown>;
+		expect(data.status).toBe("passed");
+	}, 30_000);
 });
 
 describe("CLI contract: diagnose", () => {

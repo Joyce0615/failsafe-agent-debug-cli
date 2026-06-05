@@ -203,3 +203,129 @@ export function extractCommandName(command: string): string {
 
 	return basename;
 }
+
+/**
+ * Shell features that require a real shell (cannot run via direct argv).
+ * Detected outside of quoted regions.
+ */
+const SHELL_FEATURE_CHARS = new Set(["|", "&", ";", "<", ">", "*", "?", "`", "~"]);
+
+export type ArgvParseResult =
+	| { kind: "argv"; argv: string[] }
+	| { kind: "needs_shell"; reason: string };
+
+/**
+ * Parse a simple command string into an argv array for direct, shell-free
+ * execution. Returns `{ kind: "needs_shell" }` when the command uses shell
+ * features (operators, redirects, globs, subshells, variable expansion) that
+ * require an actual shell interpreter.
+ *
+ * Tokenization respects single and double quotes; quotes are stripped from
+ * the resulting tokens. Backslash escapes a following character.
+ */
+export function parseToArgv(command: string): ArgvParseResult {
+	const trimmed = command.trim();
+	if (trimmed.length === 0) {
+		return { kind: "needs_shell", reason: "Empty command" };
+	}
+
+	const argv: string[] = [];
+	let current = "";
+	let hasToken = false;
+	let inSingle = false;
+	let inDouble = false;
+	let i = 0;
+
+	while (i < trimmed.length) {
+		const ch = trimmed[i];
+
+		if (inSingle) {
+			if (ch === "'") {
+				inSingle = false;
+			} else {
+				current += ch;
+			}
+			hasToken = true;
+			i++;
+			continue;
+		}
+
+		if (inDouble) {
+			if (ch === '"') {
+				inDouble = false;
+			} else if (ch === "\\" && i + 1 < trimmed.length) {
+				// In double quotes, backslash escapes the next char
+				current += trimmed[i + 1];
+				i++;
+			} else if (ch === "$" || ch === "`") {
+				// Variable expansion / command substitution inside double quotes
+				return {
+					kind: "needs_shell",
+					reason: `Command uses shell expansion ('${ch}') and requires --shell`,
+				};
+			} else {
+				current += ch;
+			}
+			hasToken = true;
+			i++;
+			continue;
+		}
+
+		// Unquoted context
+		if (ch === "'") {
+			inSingle = true;
+			hasToken = true;
+			i++;
+			continue;
+		}
+		if (ch === '"') {
+			inDouble = true;
+			hasToken = true;
+			i++;
+			continue;
+		}
+		if (ch === "\\" && i + 1 < trimmed.length) {
+			current += trimmed[i + 1];
+			hasToken = true;
+			i += 2;
+			continue;
+		}
+		if (ch === " " || ch === "\t" || ch === "\n") {
+			if (hasToken) {
+				argv.push(current);
+				current = "";
+				hasToken = false;
+			}
+			i++;
+			continue;
+		}
+		if (ch === "$") {
+			return {
+				kind: "needs_shell",
+				reason: "Command uses variable expansion ('$') and requires --shell",
+			};
+		}
+		if (SHELL_FEATURE_CHARS.has(ch)) {
+			return {
+				kind: "needs_shell",
+				reason: `Command uses shell feature ('${ch}') and requires --shell`,
+			};
+		}
+
+		current += ch;
+		hasToken = true;
+		i++;
+	}
+
+	if (inSingle || inDouble) {
+		return { kind: "needs_shell", reason: "Unterminated quote in command" };
+	}
+
+	if (hasToken) argv.push(current);
+
+	if (argv.length === 0) {
+		return { kind: "needs_shell", reason: "Empty command" };
+	}
+
+	return { kind: "argv", argv };
+}

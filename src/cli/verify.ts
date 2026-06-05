@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { runCommand } from "../capture/runner.js";
 import { detectAndParse } from "../parsers/index.js";
 import { computeSignature, signaturesMatch } from "../repro/signatures.js";
-import { loadPolicy, validateCommand } from "../security/policy.js";
+import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { outputResult } from "./format.js";
 import { initCommand, resolveFailureId } from "./shared.js";
 
@@ -51,9 +51,11 @@ export function registerVerifyCommand(program: Command): void {
 						message: `Repro command blocked by policy: ${reproValidation.reason}`,
 					});
 				} else {
+					const reproParsed = parseToArgv(repro.command);
 					const reproResult = await runCommand(repro.command, {
 						cwd: failure.cwd,
 						timeout_ms: timeoutMs,
+						argv: reproParsed.kind === "argv" ? reproParsed.argv : undefined,
 					});
 					checks.push({
 						kind: "minimal_repro",
@@ -77,9 +79,11 @@ export function registerVerifyCommand(program: Command): void {
 					message: `Original command blocked by policy: ${origValidation.reason}`,
 				});
 			} else {
+				const origParsed = parseToArgv(failure.command);
 				const originalResult = await runCommand(failure.command, {
 					cwd: failure.cwd,
 					timeout_ms: timeoutMs,
+					argv: origParsed.kind === "argv" ? origParsed.argv : undefined,
 				});
 				checks.push({
 					kind: "original_command",
