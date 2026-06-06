@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { generateRepro } from "../repro/engine.js";
 import { outputResult } from "./format.js";
-import { initCommand, resolveFailureId } from "./shared.js";
+import { initCommand, resolveFailureOrExit } from "./shared.js";
 
 export function registerReproCommand(program: Command): void {
 	program
@@ -9,22 +9,13 @@ export function registerReproCommand(program: Command): void {
 		.description("Create or identify a minimal reproduction for a failure")
 		.option("--format <format>", "Output format: json or text")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.option("--no-verify", "Skip repro verification (faster but less confident)")
 		.option("--timeout <seconds>", "Repro verification timeout", "60")
 		.action(async (rawId: string, opts) => {
-			const { config, store, outOpts } = initCommand(opts);
+			const { store, outOpts } = initCommand(opts);
 
-			const failureId = resolveFailureId(rawId, store);
-			if (!failureId) {
-				outputResult({ error: true, message: "No failure found" }, outOpts);
-				process.exit(1);
-			}
-
-			const failure = store.getFailure(failureId);
-			if (!failure) {
-				outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
-				process.exit(1);
-			}
+			const { failure } = resolveFailureOrExit(rawId, store, outOpts);
 
 			const repro = await generateRepro(failure, store, {
 				verify: opts.verify !== false,

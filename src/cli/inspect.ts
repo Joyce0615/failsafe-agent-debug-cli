@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { DebugController } from "../debug/controller.js";
+import { ExitCode } from "./exit-codes.js";
 import { type OutputOptions, outputResult } from "./format.js";
 import { initCommand } from "./shared.js";
 
@@ -20,7 +21,7 @@ function handleDebugError(err: unknown, sessionId: string, outOpts: OutputOption
 		},
 		outOpts,
 	);
-	process.exit(1);
+	process.exit(isNoSession ? ExitCode.DEBUG_UNAVAILABLE : ExitCode.ERROR);
 }
 
 export function registerInspectCommand(program: Command): void {

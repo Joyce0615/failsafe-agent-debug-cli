@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { outputResult } from "./format.js";
-import { initCommand, resolveFailureId } from "./shared.js";
+import { initCommand, resolveFailureOrExit } from "./shared.js";
 
 export function registerExplainCommand(program: Command): void {
 	program
@@ -8,20 +8,11 @@ export function registerExplainCommand(program: Command): void {
 		.description("Combine all evidence into a compact explanation")
 		.option("--format <format>", "Output format: json or text")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.action(async (rawId: string, opts) => {
-			const { config, store, outOpts } = initCommand(opts);
+			const { store, outOpts } = initCommand(opts);
 
-			const failureId = resolveFailureId(rawId, store);
-			if (!failureId) {
-				outputResult({ error: true, message: "No failure found" }, outOpts);
-				process.exit(1);
-			}
-
-			const failure = store.getFailure(failureId);
-			if (!failure) {
-				outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
-				process.exit(1);
-			}
+			const { failureId, failure } = resolveFailureOrExit(rawId, store, outOpts);
 
 			// Collect all available evidence
 			const diagnosis = store.getDiagnosis(failureId);

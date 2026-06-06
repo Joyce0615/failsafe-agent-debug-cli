@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { computeSignature } from "../repro/signatures.js";
 import { outputResult } from "./format.js";
-import { initCommand, resolveFailureId } from "./shared.js";
+import { initCommand, resolveFailureOrExit } from "./shared.js";
 
 export function registerHistoryCommand(program: Command): void {
 	program
@@ -9,23 +9,14 @@ export function registerHistoryCommand(program: Command): void {
 		.description("Show prior failures and whether they were resolved")
 		.option("--format <format>", "Output format: json or text")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.option("--similar <failure-id>", "Find failures similar to this one")
 		.option("--limit <n>", "Max failures to show", "10")
 		.action(async (opts) => {
-			const { config, store, outOpts } = initCommand(opts);
+			const { store, outOpts } = initCommand(opts);
 
 			if (opts.similar) {
-				const failureId = resolveFailureId(opts.similar, store);
-				if (!failureId) {
-					outputResult({ error: true, message: "Failure not found" }, outOpts);
-					process.exit(1);
-				}
-
-				const failure = store.getFailure(failureId);
-				if (!failure) {
-					outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
-					process.exit(1);
-				}
+				const { failureId, failure } = resolveFailureOrExit(opts.similar, store, outOpts);
 
 				const allErrors = failure.parsed.flatMap((p) => p.errors);
 				const signature = computeSignature(allErrors, failure.primary_location);

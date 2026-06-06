@@ -95,13 +95,23 @@ describe("CLI contract: run", () => {
 		expect(paths.combined).toContain("combined");
 	}, 30_000);
 
-	test("blocks dangerous commands with error JSON", async () => {
+	test("blocks dangerous commands with POLICY_BLOCK exit code (3)", async () => {
 		const r = await run(["run", "rm -rf /"]);
-		expect(r.exitCode).not.toBe(0);
+		expect(r.exitCode).toBe(3);
 		const data = r.json as Record<string, unknown>;
 		expect(data.error).toBe(true);
 		expect(data.message as string).toContain("blocked");
 	});
+
+	test("--quiet emits minified single-line JSON", async () => {
+		const r = await run(["run", "--quiet", 'node -e "process.exit(1)"']);
+		expect(r.exitCode).toBe(0);
+		// Minified: no newlines inside the JSON payload, single line of output
+		expect(r.stdout.trim().split("\n").length).toBe(1);
+		const data = r.json as Record<string, unknown>;
+		expect(data.failure_id).toBeDefined();
+		expect(data.status).toBe("failed");
+	}, 30_000);
 
 	test("rejects shell syntax without --shell (needs_shell packet)", async () => {
 		// A pipe requires a shell; without --shell this is rejected.
@@ -146,9 +156,9 @@ describe("CLI contract: diagnose", () => {
 		expect(data.rule_source).toBeDefined();
 	}, 30_000);
 
-	test("diagnose nonexistent ID returns error", async () => {
+	test("diagnose nonexistent ID returns NO_INPUT exit code (2)", async () => {
 		const r = await run(["diagnose", "fail_nonexistent"]);
-		expect(r.exitCode).not.toBe(0);
+		expect(r.exitCode).toBe(2);
 		const data = r.json as Record<string, unknown>;
 		expect(data.error).toBe(true);
 	});

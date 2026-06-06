@@ -6,7 +6,9 @@ import {
 	FailsafeConfigSchema,
 	resolveConfigPaths,
 } from "../types/config.js";
-import { type OutputOptions, resolveOutputOptions } from "./format.js";
+import type { FailureRecord } from "../types/failure.js";
+import { ExitCode } from "./exit-codes.js";
+import { type OutputOptions, outputResult, resolveOutputOptions } from "./format.js";
 
 export function loadConfig(cwd?: string): FailsafeConfig {
 	const workDir = cwd ?? process.cwd();
@@ -39,6 +41,28 @@ export function resolveFailureId(idOrLast: string, store: FailsafeStore): string
 }
 
 /**
+ * Resolve a failure record by id-or-"last", or emit a NO_INPUT error packet
+ * and exit. Returns the resolved id and record; never returns on failure.
+ */
+export function resolveFailureOrExit(
+	rawId: string,
+	store: FailsafeStore,
+	outOpts: OutputOptions,
+): { failureId: string; failure: FailureRecord } {
+	const failureId = resolveFailureId(rawId, store);
+	if (!failureId) {
+		outputResult({ error: true, message: "No failure found in history" }, outOpts);
+		process.exit(ExitCode.NO_INPUT);
+	}
+	const failure = store.getFailure(failureId);
+	if (!failure) {
+		outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
+		process.exit(ExitCode.NO_INPUT);
+	}
+	return { failureId, failure };
+}
+
+/**
  * Shared command initialization: loads config, creates store,
  * resolves output options with config defaults and --max-bytes.
  * Use this in every command handler for consistent behavior.
@@ -47,6 +71,7 @@ export function initCommand(opts: {
 	format?: string;
 	raw?: boolean;
 	maxBytes?: string | number;
+	quiet?: boolean;
 }): { config: FailsafeConfig; store: FailsafeStore; outOpts: OutputOptions } {
 	const config = loadConfig();
 	const store = createStore(config);

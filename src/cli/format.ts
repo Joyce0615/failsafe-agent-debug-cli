@@ -5,6 +5,8 @@ export type OutputOptions = {
 	format: "json" | "text";
 	maxBytes?: number;
 	raw: boolean;
+	/** Quiet mode: emit minified single-line JSON for composable shell usage. */
+	quiet: boolean;
 };
 
 export function resolveOutputOptions(
@@ -12,6 +14,7 @@ export function resolveOutputOptions(
 		format?: string;
 		raw?: boolean;
 		maxBytes?: number;
+		quiet?: boolean;
 	},
 	configDefault?: "json" | "text",
 	configMaxBytes?: number,
@@ -26,10 +29,13 @@ export function resolveOutputOptions(
 	} else {
 		format = "json";
 	}
+	// Quiet mode implies JSON (minified) regardless of configured default.
+	const quiet = opts.quiet ?? false;
 	return {
-		format,
+		format: quiet ? "json" : format,
 		raw: opts.raw ?? false,
 		maxBytes: opts.maxBytes ?? configMaxBytes,
+		quiet,
 	};
 }
 
@@ -38,6 +44,12 @@ export function outputResult(
 	opts: OutputOptions,
 	textFormatter?: (d: unknown) => string,
 ): void {
+	// Quiet mode: minified single-line JSON, no truncation decoration.
+	if (opts.quiet) {
+		console.log(JSON.stringify(data));
+		return;
+	}
+
 	let output: string;
 	if (opts.format === "json") {
 		output = JSON.stringify(data, null, 2);

@@ -3,8 +3,9 @@ import { checkRuntimeCapability } from "../debug/adapters/index.js";
 import { detectRuntime } from "../debug/launch.js";
 import { extractSourceSlice } from "../diagnosis/context.js";
 import type { SourceLocation } from "../types/common.js";
+import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
-import { initCommand, resolveFailureId } from "./shared.js";
+import { initCommand, resolveFailureOrExit } from "./shared.js";
 
 /**
  * Build an interactive debugpy launch command for a Python command.
@@ -42,21 +43,12 @@ export function registerDebugCommand(program: Command): void {
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--break <location>", "Breakpoint location: 'primary' or file:line", "primary")
 		.option("--port <port>", "debugpy listen port", "5678")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.option("--runtime <runtime>", "Override runtime detection: python or node")
 		.action(async (rawId: string, opts) => {
-			const { config, store, outOpts } = initCommand(opts);
+			const { store, outOpts } = initCommand(opts);
 
-			const failureId = resolveFailureId(rawId, store);
-			if (!failureId) {
-				outputResult({ error: true, message: "No failure found" }, outOpts);
-				process.exit(1);
-			}
-
-			const failure = store.getFailure(failureId);
-			if (!failure) {
-				outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
-				process.exit(1);
-			}
+			const { failureId, failure } = resolveFailureOrExit(rawId, store, outOpts);
 
 			// Determine breakpoint
 			let breakpoint: SourceLocation;
@@ -68,7 +60,7 @@ export function registerDebugCommand(program: Command): void {
 						{ error: true, message: "No primary location for this failure. Use --break file:line" },
 						outOpts,
 					);
-					process.exit(1);
+					process.exit(ExitCode.ERROR);
 				}
 			} else {
 				const match = opts.break.match(/^(.+):(\d+)$/);
@@ -79,7 +71,7 @@ export function registerDebugCommand(program: Command): void {
 						{ error: true, message: `Invalid breakpoint format: ${opts.break}. Use file:line` },
 						outOpts,
 					);
-					process.exit(1);
+					process.exit(ExitCode.ERROR);
 				}
 			}
 
@@ -103,7 +95,7 @@ export function registerDebugCommand(program: Command): void {
 					},
 					outOpts,
 				);
-				process.exit(1);
+				process.exit(ExitCode.DEBUG_UNAVAILABLE);
 			}
 
 			// Check the adapter is installed
@@ -125,7 +117,7 @@ export function registerDebugCommand(program: Command): void {
 					},
 					outOpts,
 				);
-				process.exit(1);
+				process.exit(ExitCode.DEBUG_UNAVAILABLE);
 			}
 
 			// Emit non-interactive launch guidance. Failsafe does not manage a

@@ -4,7 +4,7 @@ import { detectAndParse } from "../parsers/index.js";
 import { computeSignature, signaturesMatch } from "../repro/signatures.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { outputResult } from "./format.js";
-import { initCommand, resolveFailureId } from "./shared.js";
+import { initCommand, resolveFailureOrExit } from "./shared.js";
 
 export function registerVerifyCommand(program: Command): void {
 	program
@@ -12,22 +12,13 @@ export function registerVerifyCommand(program: Command): void {
 		.description("Verify that a fix resolves the failure")
 		.option("--format <format>", "Output format: json or text")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.option("--timeout <seconds>", "Command timeout", "120")
 		.action(async (rawId: string, opts) => {
 			const { config, store, outOpts } = initCommand(opts);
 			const timeoutMs = Number.parseInt(opts.timeout, 10) * 1000;
 
-			const failureId = resolveFailureId(rawId, store);
-			if (!failureId) {
-				outputResult({ error: true, message: "No failure found" }, outOpts);
-				process.exit(1);
-			}
-
-			const failure = store.getFailure(failureId);
-			if (!failure) {
-				outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
-				process.exit(1);
-			}
+			const { failureId, failure } = resolveFailureOrExit(rawId, store, outOpts);
 
 			const repro = store.getRepro(failureId);
 			const policy = loadPolicy(config);

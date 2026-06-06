@@ -6,8 +6,9 @@ import {
 	computeSignatureHash,
 } from "../rules/learned.js";
 import type { FixOutcome } from "../rules/types.js";
+import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
-import { initCommand, resolveFailureId } from "./shared.js";
+import { initCommand, resolveFailureOrExit } from "./shared.js";
 
 export function registerResolveCommand(program: Command): void {
 	program
@@ -19,26 +20,17 @@ export function registerResolveCommand(program: Command): void {
 		.option("--files-changed <files>", "Comma-separated list of changed files")
 		.option("--format <format>", "Output format: json or text")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.action(async (rawId: string, opts) => {
 			const { config, store, outOpts } = initCommand(opts);
 
-			const failureId = resolveFailureId(rawId, store);
-			if (!failureId) {
-				outputResult({ error: true, message: "No failure found" }, outOpts);
-				process.exit(1);
-			}
-
-			const failure = store.getFailure(failureId);
-			if (!failure) {
-				outputResult({ error: true, message: `Failure not found: ${failureId}` }, outOpts);
-				process.exit(1);
-			}
+			const { failureId, failure } = resolveFailureOrExit(rawId, store, outOpts);
 
 			// Determine success/fail
 			const success = opts.success === true;
 			if (!opts.success && !opts.fail) {
 				outputResult({ error: true, message: "Specify --success or --fail" }, outOpts);
-				process.exit(1);
+				process.exit(ExitCode.ERROR);
 			}
 
 			// Compute signature hash from the failure's parsed errors

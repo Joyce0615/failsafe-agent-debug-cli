@@ -8,6 +8,7 @@ import type { FailureRecord, FailureStatus } from "../types/failure.js";
 import { formatFailureText } from "../utils/format.js";
 import { failureId } from "../utils/id.js";
 import { computeTokenBudget } from "../utils/tokens.js";
+import { ExitCode } from "./exit-codes.js";
 import { outputResult, resolveOutputOptions } from "./format.js";
 import { createStore, loadConfig } from "./shared.js";
 
@@ -19,6 +20,7 @@ export function registerRunCommand(program: Command): void {
 		.option("--timeout <seconds>", "Command timeout in seconds", "120")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--raw", "Include raw output in response")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.option("--shell", "Run via 'sh -c' to allow shell syntax (operators, globs, pipes)")
 		.option("--no-policy", "Skip command safety policy check")
 		.action(async (command: string, opts) => {
@@ -41,7 +43,7 @@ export function registerRunCommand(program: Command): void {
 						command,
 					};
 					outputResult(error, outOpts);
-					process.exit(1);
+					process.exit(ExitCode.POLICY_BLOCK);
 				}
 			}
 
@@ -66,7 +68,7 @@ export function registerRunCommand(program: Command): void {
 						},
 						outOpts,
 					);
-					process.exit(1);
+					process.exit(ExitCode.ERROR);
 				}
 				argv = parsed.argv;
 			}

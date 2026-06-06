@@ -60,7 +60,7 @@ describe("outputResult truncation", () => {
 			token_budget: { raw_output_bytes: 100, returned_bytes: 50 },
 		};
 		const result = captureJson(() =>
-			outputResult(data, { format: "json", raw: false, maxBytes: 10000 }),
+			outputResult(data, { format: "json", raw: false, maxBytes: 10000, quiet: false }),
 		);
 		expect(result.status).toBe("failed");
 		expect(result.truncated).toBeUndefined();
@@ -75,7 +75,7 @@ describe("outputResult truncation", () => {
 			token_budget: { raw_output_bytes: 5000, returned_bytes: 2200 },
 		};
 		const result = captureJson(() =>
-			outputResult(data, { format: "json", raw: true, maxBytes: 500 }),
+			outputResult(data, { format: "json", raw: true, maxBytes: 500, quiet: false }),
 		);
 		expect(result.truncated).toBe(true);
 		expect(result.truncation_reason).toBeDefined();
@@ -95,7 +95,7 @@ describe("outputResult truncation", () => {
 			token_budget: { raw_output_bytes: 5000, returned_bytes: 3100 },
 		};
 		const result = captureJson(() =>
-			outputResult(data, { format: "json", raw: true, maxBytes: 400 }),
+			outputResult(data, { format: "json", raw: true, maxBytes: 400, quiet: false }),
 		);
 		const tb = result.token_budget as Record<string, number>;
 		// The reported returned_bytes should match the actual emitted JSON size
@@ -115,7 +115,7 @@ describe("outputResult truncation", () => {
 			token_budget: { raw_output_bytes: 8000, returned_bytes: 5200 },
 		};
 		const result = captureJson(() =>
-			outputResult(data, { format: "json", raw: false, maxBytes: 300 }),
+			outputResult(data, { format: "json", raw: false, maxBytes: 300, quiet: false }),
 		);
 		expect(result.truncated).toBe(true);
 		expect(result.failure_id).toBe("fail_essential");

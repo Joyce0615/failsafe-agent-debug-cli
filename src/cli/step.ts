@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { DebugController } from "../debug/controller.js";
+import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
 import { initCommand } from "./shared.js";
 
@@ -93,7 +94,7 @@ export function registerStepCommand(program: Command): void {
 					},
 					outOpts,
 				);
-				process.exit(1);
+				process.exit(isNoSession ? ExitCode.DEBUG_UNAVAILABLE : ExitCode.ERROR);
 			}
 		});
 }
