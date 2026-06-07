@@ -3,10 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "failsafe": "./src/cli/index.ts"
+    "failsafe": "./src/cli/index.ts",
+    "failsafe-mcp": "./src/mcp/server.ts"
   },
   "scripts": {
     "dev": "bun src/cli/index.ts",
+    "mcp": "bun src/mcp/server.ts",
     "test": "bun test tests/",
     "setup:fixtures": "bun scripts/setup-fixtures.ts",
     "test:e2e": "bun scripts/setup-fixtures.ts && bun test tests/e2e/",
@@ -15,6 +17,7 @@
     "typecheck": "bunx tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "commander": "^13.0.0",
     "nanoid": "^5.1.0",
     "yaml": "^2.8.4",

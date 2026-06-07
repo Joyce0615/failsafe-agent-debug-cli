@@ -90,6 +90,37 @@ Rules are evaluated in priority order:
 
 Learned rules auto-promote when they reach sufficient confidence and occurrence count. Flaky tests are detected when failures recur after a fix.
 
+## MCP Interface
+
+Failsafe ships an MCP (Model Context Protocol) server so flow orchestrators (AgentFlow, Statewright, etc.) can call it as a validation checkpoint. It exposes four tools over stdio, each returning the same JSON contract as the equivalent CLI command:
+
+| Tool | Equivalent CLI | Purpose |
+|------|----------------|---------|
+| `failsafe_analyze` | `run` (+ `diagnose` if `diagnose=true`) | Run a command, capture/parse the failure, optionally diagnose |
+| `failsafe_diagnose` | `diagnose` | Root-cause hypothesis for a stored failure |
+| `failsafe_repro` | `repro` | Minimal reproduction selector |
+| `failsafe_verify` | `verify` | Re-run repro + original to confirm a fix |
+
+Start the server:
+
+```bash
+failsafe-mcp        # installed binary
+# or
+bun run mcp         # from the repo
+```
+
+MCP client config example:
+
+```json
+{
+  "mcpServers": {
+    "failsafe": { "command": "failsafe-mcp" }
+  }
+}
+```
+
+The CLI and MCP server share a single implementation (`src/core/operations.ts`), so their output contracts never diverge.
+
 Example `.failsafe/rules.yaml`:
 
 ```yaml
