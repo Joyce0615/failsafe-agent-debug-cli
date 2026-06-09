@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
 import { registerConfigCommand, registerInitCommand } from "./config.js";
 import { registerDebugCommand } from "./debug.js";
 import { registerDiagnoseCommand } from "./diagnose.js";
@@ -43,4 +44,11 @@ registerResolveCommand(program);
 registerRulesCommand(program);
 registerKbCommand(program);
 
-program.parse();
+// Use parseAsync so async actions complete before we flush telemetry.
+await program.parseAsync();
+if (isTelemetryEnabled()) {
+	await shutdownTelemetry();
+	// The OTLP exporter can leave sockets/timers pending; force a prompt exit.
+	// Reaching here means a success path (error paths call process.exit earlier).
+	process.exit(process.exitCode ?? 0);
+}

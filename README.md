@@ -121,6 +121,16 @@ MCP client config example:
 
 The CLI and MCP server share a single implementation (`src/core/operations.ts`), so their output contracts never diverge.
 
+## Telemetry (OpenTelemetry)
+
+Telemetry is off by default. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to emit OTLP/HTTP spans for the core operations:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces failsafe run "pytest tests/"
+```
+
+Spans emitted: `failsafe.run`, `failsafe.parse`, `failsafe.diagnose`, `failsafe.repro`, `failsafe.verify`. Attributes (prefixed `failsafe.`) include failure type, severity, root-cause category and confidence, parser matched, rule source, exit code, raw output bytes, and compression ratio. When the endpoint is unset there is zero overhead — the SDK is never loaded.
+
 Example `.failsafe/rules.yaml`:
 
 ```yaml

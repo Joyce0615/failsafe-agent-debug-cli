@@ -15,6 +15,7 @@ import { computeSignature } from "../repro/signatures.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { redactSecrets } from "../security/redaction.js";
 import type { FailsafeStore } from "../storage/store.js";
+import { withSpan } from "../telemetry/otel.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 import type { FailsafeConfig } from "../types/config.js";
 import type { FailureDiagnosis } from "../types/diagnosis.js";
@@ -54,6 +55,33 @@ function buildNextActions(
  * callers that want raw output append them on top of the returned packet.
  */
 export async function analyzeCommand(
+	command: string,
+	config: FailsafeConfig,
+	store: FailsafeStore,
+	opts: { timeoutMs?: number; shell?: boolean; noPolicy?: boolean } = {},
+): Promise<CoreResult<Record<string, unknown>>> {
+	return withSpan("failsafe.run", async (setAttrs) => {
+		const result = await analyzeCommandImpl(command, config, store, opts);
+		if (result.ok) {
+			const d = result.data;
+			const tb = d.token_budget as
+				| { raw_output_bytes?: number; compression_ratio?: number }
+				| undefined;
+			setAttrs({
+				status: d.status as string,
+				failure_type: d.failure_type as string,
+				exit_code: d.exit_code as number,
+				raw_output_bytes: tb?.raw_output_bytes,
+				compression_ratio: tb?.compression_ratio,
+			});
+		} else {
+			setAttrs({ status: "error", error_code: result.error.exit_code });
+		}
+		return result;
+	});
+}
+
+async function analyzeCommandImpl(
 	command: string,
 	config: FailsafeConfig,
 	store: FailsafeStore,
@@ -104,7 +132,15 @@ export async function analyzeCommand(
 	const { redacted: redactedCombined } = redactSecrets(result.combined);
 	const allMatches = [...new Set([...stdoutMatches, ...stderrMatches])];
 
-	const parsed = detectAndParse(redactedStdout, redactedStderr, command);
+	const parsed = await withSpan("failsafe.parse", async (setAttrs) => {
+		const p = detectAndParse(redactedStdout, redactedStderr, command);
+		setAttrs({
+			parser_matched: p[0]?.parser,
+			failure_type: p[0]?.failure_type,
+			parser_count: p.length,
+		});
+		return p;
+	});
 	const primaryLocation = extractPrimaryLocation(parsed);
 
 	let status: FailureStatus = "failed";
@@ -179,16 +215,23 @@ export async function diagnoseFailure(
 	store: FailsafeStore,
 	config: FailsafeConfig,
 ): Promise<CoreResult<FailureDiagnosis>> {
-	const fid = resolveId(rawId, store);
-	if (!fid) {
-		return notFound(rawId);
-	}
-	const failure = store.getFailure(fid);
-	if (!failure) return notFound(rawId);
+	return withSpan("failsafe.diagnose", async (setAttrs) => {
+		const fid = resolveId(rawId, store);
+		if (!fid) return notFound(rawId);
+		const failure = store.getFailure(fid);
+		if (!failure) return notFound(rawId);
 
-	const diagnosis = await diagnose(failure, store, config);
-	store.saveDiagnosis(diagnosis);
-	return { ok: true, data: diagnosis };
+		const diagnosis = await diagnose(failure, store, config);
+		store.saveDiagnosis(diagnosis);
+		setAttrs({
+			failure_type: diagnosis.failure_type,
+			severity: diagnosis.severity,
+			category: diagnosis.root_cause?.category,
+			confidence: diagnosis.root_cause?.confidence,
+			rule_source: diagnosis.rule_source,
+		});
+		return { ok: true, data: diagnosis };
+	});
 }
 
 /** Generate (or fetch) a minimal reproduction for a stored failure. */
@@ -197,34 +240,54 @@ export async function reproFailure(
 	store: FailsafeStore,
 	opts: { verify?: boolean; timeoutMs?: number } = {},
 ): Promise<CoreResult<Record<string, unknown>>> {
-	const fid = resolveId(rawId, store);
-	if (!fid) return notFound(rawId);
-	const failure = store.getFailure(fid);
-	if (!failure) return notFound(rawId);
+	return withSpan("failsafe.repro", async (setAttrs) => {
+		const fid = resolveId(rawId, store);
+		if (!fid) return notFound(rawId);
+		const failure = store.getFailure(fid);
+		if (!failure) return notFound(rawId);
 
-	const repro = await generateRepro(failure, store, {
-		verify: opts.verify ?? false,
-		timeout_ms: opts.timeoutMs ?? 60_000,
-		cwd: failure.cwd,
+		const repro = await generateRepro(failure, store, {
+			verify: opts.verify ?? false,
+			timeout_ms: opts.timeoutMs ?? 60_000,
+			cwd: failure.cwd,
+		});
+
+		setAttrs({ status: repro.status, kind: repro.kind, confidence: repro.confidence });
+		return {
+			ok: true,
+			data: {
+				failure_id: failure.failure_id,
+				repro_id: repro.repro_id,
+				status: repro.status,
+				kind: repro.kind,
+				command: repro.command,
+				confidence: repro.confidence,
+				reduction: repro.reduction,
+				next: repro.next,
+			},
+		};
 	});
-
-	return {
-		ok: true,
-		data: {
-			failure_id: failure.failure_id,
-			repro_id: repro.repro_id,
-			status: repro.status,
-			kind: repro.kind,
-			command: repro.command,
-			confidence: repro.confidence,
-			reduction: repro.reduction,
-			next: repro.next,
-		},
-	};
 }
 
 /** Verify whether a fix resolves a stored failure by re-running commands. */
 export async function verifyFailure(
+	rawId: string,
+	store: FailsafeStore,
+	config: FailsafeConfig,
+	opts: { timeoutMs?: number } = {},
+): Promise<CoreResult<Record<string, unknown>>> {
+	return withSpan("failsafe.verify", async (setAttrs) => {
+		const result = await verifyFailureImpl(rawId, store, config, opts);
+		if (result.ok) {
+			setAttrs({ status: result.data.status as string });
+		} else {
+			setAttrs({ status: "error", error_code: result.error.exit_code });
+		}
+		return result;
+	});
+}
+
+async function verifyFailureImpl(
 	rawId: string,
 	store: FailsafeStore,
 	config: FailsafeConfig,
