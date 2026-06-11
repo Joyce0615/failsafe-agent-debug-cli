@@ -64,6 +64,77 @@ export function registerKbCommand(program: Command): void {
 			store.close();
 		});
 
+	// failsafe kb export-dataset [--output dataset.jsonl] [--success-only]
+	// Emits resolved failure -> diagnosis -> fix training pairs (JSONL), the
+	// prerequisite dataset for any future local diagnosis model.
+	kbCmd
+		.command("export-dataset")
+		.description("Export resolved failure/fix pairs as JSONL training data")
+		.option("--output <file>", "Output JSONL file path", "dataset.jsonl")
+		.option("--success-only", "Only include successful fixes")
+		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.action(async (opts) => {
+			const { store, outOpts } = initCommand(opts);
+			const outputFile = opts.output as string;
+			const successOnly = opts.successOnly === true;
+
+			const outcomes = store.listFixOutcomes({ successOnly });
+			const lines: string[] = [];
+			let withDiagnosis = 0;
+
+			for (const outcome of outcomes) {
+				const failure = store.getFailure(outcome.failure_id);
+				if (!failure) continue;
+				const diagnosis = store.getDiagnosis(outcome.failure_id);
+				if (diagnosis) withDiagnosis++;
+
+				const firstError = failure.parsed.flatMap((p) => p.errors)[0];
+				const sample = {
+					signature_hash: outcome.signature_hash,
+					// Input features (the "error")
+					command: failure.command,
+					failure_type: failure.parsed[0]?.failure_type ?? "unknown",
+					error_type: firstError?.error_type,
+					error_message: firstError?.message,
+					primary_location: failure.primary_location,
+					// Target label (the "diagnosis")
+					category: diagnosis?.root_cause?.category,
+					explanation: diagnosis?.root_cause?.explanation,
+					confidence: diagnosis?.root_cause?.confidence,
+					rule_source: diagnosis?.rule_source,
+					// Outcome (the "fix")
+					fix_summary: outcome.fix_summary,
+					fix_commands: outcome.fix_commands,
+					files_changed: outcome.files_changed,
+					success: outcome.success,
+					resolved_at: outcome.resolved_at,
+				};
+				lines.push(JSON.stringify(sample));
+			}
+
+			writeFileSync(outputFile, lines.length > 0 ? `${lines.join("\n")}\n` : "", "utf-8");
+
+			outputResult(
+				{
+					exported_to: outputFile,
+					samples: lines.length,
+					with_diagnosis: withDiagnosis,
+					success_only: successOnly,
+				},
+				outOpts,
+				(d) => {
+					const data = d as { exported_to: string; samples: number; with_diagnosis: number };
+					return [
+						`Exported ${data.samples} training sample(s) to ${data.exported_to}`,
+						`  With diagnosis labels: ${data.with_diagnosis}`,
+					].join("\n");
+				},
+			);
+
+			store.close();
+		});
+
 	// failsafe kb import <file> [--dry-run]
 	kbCmd
 		.command("import <file>")

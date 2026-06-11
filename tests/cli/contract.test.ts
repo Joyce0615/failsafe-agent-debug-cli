@@ -6,7 +6,7 @@
  * the output contracts that agents rely on.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -234,6 +234,53 @@ describe("CLI contract: rules", () => {
 		expect(Array.isArray(data.rules)).toBe(true);
 		expect(data.total).toBeDefined();
 	});
+});
+
+describe("CLI contract: kb export-dataset", () => {
+	test("emits JSONL training pairs from resolved failures", async () => {
+		const ws = mkdtempSync(join(tmpdir(), "failsafe-dataset-"));
+		await run(["init"], { cwd: ws });
+
+		// Capture, diagnose, and resolve a failure to create a training pair.
+		await run(["run", "python3 -c \"raise KeyError('x')\""], { cwd: ws });
+		await run(["diagnose", "last"], { cwd: ws });
+		await run(["resolve", "last", "--success", "--fix-summary", "added .get() default"], {
+			cwd: ws,
+		});
+
+		const out = join(ws, "dataset.jsonl");
+		const r = await run(["kb", "export-dataset", "--output", out], { cwd: ws });
+		expect(r.exitCode).toBe(0);
+		const data = r.json as Record<string, unknown>;
+		expect(data.samples).toBe(1);
+
+		// The JSONL file should contain one valid training sample.
+		const content = readFileSync(out, "utf-8").trim();
+		const lines = content.split("\n");
+		expect(lines.length).toBe(1);
+		const sample = JSON.parse(lines[0]) as Record<string, unknown>;
+		expect(sample.signature_hash).toBeDefined();
+		expect(sample.command).toContain("python3");
+		expect(sample.fix_summary).toBe("added .get() default");
+		expect(sample.success).toBe(true);
+
+		rmSync(ws, { recursive: true, force: true });
+	}, 30_000);
+
+	test("success-only filter excludes failed fixes", async () => {
+		const ws = mkdtempSync(join(tmpdir(), "failsafe-dataset2-"));
+		await run(["init"], { cwd: ws });
+		await run(["run", "python3 -c \"raise ValueError('y')\""], { cwd: ws });
+		await run(["resolve", "last", "--fail", "--fix-summary", "did not work"], { cwd: ws });
+
+		const out = join(ws, "ds.jsonl");
+		const r = await run(["kb", "export-dataset", "--output", out, "--success-only"], { cwd: ws });
+		expect(r.exitCode).toBe(0);
+		const data = r.json as Record<string, unknown>;
+		expect(data.samples).toBe(0);
+
+		rmSync(ws, { recursive: true, force: true });
+	}, 30_000);
 });
 
 describe("CLI contract: doctor", () => {

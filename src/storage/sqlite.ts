@@ -541,6 +541,15 @@ export class FailsafeSqlite {
 		return this.rowToFixOutcome(row);
 	}
 
+	/** List every fix outcome across all signatures (newest first). */
+	listFixOutcomes(opts: { successOnly?: boolean } = {}): FixOutcome[] {
+		const where = opts.successOnly ? "WHERE success = 1" : "";
+		const rows = this.db
+			.query(`SELECT * FROM fix_outcomes ${where} ORDER BY resolved_at DESC`)
+			.all() as FixOutcomeRow[];
+		return rows.map((row) => this.rowToFixOutcome(row));
+	}
+
 	// --------------- Flaky Signatures ---------------
 
 	upsertFlakySignature(record: FlakyRecord): void {

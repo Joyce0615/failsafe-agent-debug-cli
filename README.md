@@ -79,6 +79,7 @@ Debug sessions are in-memory within a single process, so `step` and `inspect` ca
 | `failsafe rules flaky` | List flaky failure signatures |
 | `failsafe kb export` | Export knowledge base to JSON |
 | `failsafe kb import <file>` | Import knowledge base from JSON |
+| `failsafe kb export-dataset` | Export resolved failure/fix pairs as JSONL training data |
 
 ## Tiered Rule System
 

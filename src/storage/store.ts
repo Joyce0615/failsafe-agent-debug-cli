@@ -230,6 +230,13 @@ export class FailsafeStore {
 	}
 
 	/**
+	 * Lists every fix outcome across all signatures (newest first).
+	 */
+	listFixOutcomes(opts?: { successOnly?: boolean }): FixOutcome[] {
+		return this.sqlite.listFixOutcomes(opts ?? {});
+	}
+
+	/**
 	 * Retrieves the most recent successful fix outcome for a signature hash.
 	 */
 	getLatestSuccessfulFix(signatureHash: string): FixOutcome | null {
