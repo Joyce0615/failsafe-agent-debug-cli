@@ -190,6 +190,45 @@ describe("CLI contract: repro", () => {
 	}, 30_000);
 });
 
+describe("CLI contract: debug", () => {
+	test("python failure emits launch guidance (no live session)", async () => {
+		await run(["run", "python3 -c \"raise KeyError('x')\""]);
+		const r = await run(["debug", "last", "--break", "src/x.py:1"]);
+		// debugpy may or may not be installed; either launch guidance (0) or a
+		// structured adapter_missing packet (DEBUG_UNAVAILABLE=4).
+		const data = r.json as Record<string, unknown>;
+		if (r.exitCode === 0) {
+			expect(data.mode).toBe("launch_guidance");
+			expect(data.runtime).toBe("python");
+			expect(data.launch_command as string).toContain("debugpy");
+		} else {
+			expect(r.exitCode).toBe(4);
+			expect(data.adapter_missing).toBe(true);
+		}
+	}, 30_000);
+
+	test("node failure returns unsupported_runtime packet (DEBUG_UNAVAILABLE)", async () => {
+		await run(["run", 'node -e "const x=null; x.y"']);
+		const r = await run(["debug", "last", "--break", "x.js:1"]);
+		expect(r.exitCode).toBe(4); // DEBUG_UNAVAILABLE
+		const data = r.json as Record<string, unknown>;
+		expect(data.unsupported_runtime).toBe(true);
+		expect(data.runtime).toBe("node");
+		expect(data.future_debugger as string).toContain("js-debug");
+		expect(data.install_hint).toBeDefined();
+		// Fallback commands should be offered.
+		expect(Array.isArray(data.next)).toBe(true);
+	}, 30_000);
+
+	test("step on a nonexistent session returns debug_unavailable", async () => {
+		const r = await run(["step", "--session", "dbg_nonexistent", "--over"]);
+		expect(r.exitCode).toBe(4); // DEBUG_UNAVAILABLE
+		const data = r.json as Record<string, unknown>;
+		expect(data.debug_unavailable).toBe(true);
+		expect(data.message as string).toContain("in-memory");
+	});
+});
+
 describe("CLI contract: history", () => {
 	test("returns failures array", async () => {
 		const r = await run(["history", "--limit", "5"]);
