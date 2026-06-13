@@ -122,6 +122,20 @@ describe("CLI contract: run", () => {
 		expect(data.error).toBe(true);
 	});
 
+	test("needs_shell packet has stable shape (allowed cmd + redirect)", async () => {
+		// `node` is allowed (passes policy) but `>` redirect requires a shell,
+		// so argv parsing returns a structured needs_shell packet — NOT a policy block.
+		const r = await run(["run", 'node -e "1" > /tmp/failsafe_test_out']);
+		expect(r.exitCode).toBe(1); // ExitCode.ERROR (malformed/unsupported input)
+		const data = r.json as Record<string, unknown>;
+		expect(data.error).toBe(true);
+		expect(data.needs_shell).toBe(true);
+		expect(typeof data.message).toBe("string");
+		expect(data.message as string).toContain("--shell");
+		// It should NOT have run anything (no failure_id / status produced).
+		expect(data.failure_id).toBeUndefined();
+	});
+
 	test("runs simple allowed command via argv (no shell)", async () => {
 		// Exit 1 with no shell metacharacters — should run via argv mode and
 		// produce a normal failure packet.
