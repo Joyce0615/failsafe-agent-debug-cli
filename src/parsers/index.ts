@@ -1,4 +1,5 @@
 import type { SourceLocation } from "../types/common.js";
+import { goTestParser } from "./go.js";
 import { biomeParser, eslintParser } from "./linter.js";
 import { jestParser, jsStackParser, vitestParser } from "./node.js";
 import { pytestParser, pythonTracebackParser } from "./python.js";
@@ -18,6 +19,7 @@ const ALL_PARSERS: FailureParser[] = [
 	tscParser,
 	eslintParser,
 	biomeParser,
+	goTestParser,
 	pythonTracebackParser,
 	jsStackParser,
 ];
