@@ -6,7 +6,7 @@
  * the output contracts that agents rely on.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -332,6 +332,58 @@ describe("CLI contract: kb export-dataset", () => {
 		const data = r.json as Record<string, unknown>;
 		expect(data.samples).toBe(0);
 
+		rmSync(ws, { recursive: true, force: true });
+	}, 30_000);
+});
+
+describe("CLI contract: kb schema versioning", () => {
+	test("kb export stamps the current schema_version", async () => {
+		const ws = mkdtempSync(join(tmpdir(), "failsafe-kbver-"));
+		await run(["init"], { cwd: ws });
+		const out = join(ws, "kb.json");
+		const r = await run(["kb", "export", "--output", out, "--min-confidence", "0"], { cwd: ws });
+		expect(r.exitCode).toBe(0);
+		const kb = JSON.parse(readFileSync(out, "utf-8")) as Record<string, unknown>;
+		expect(kb.schema_version).toBe("0.1");
+		rmSync(ws, { recursive: true, force: true });
+	}, 30_000);
+
+	test("kb import rejects an incompatible major schema version", async () => {
+		const ws = mkdtempSync(join(tmpdir(), "failsafe-kbrej-"));
+		await run(["init"], { cwd: ws });
+		const bad = join(ws, "bad-kb.json");
+		writeFileSync(
+			bad,
+			JSON.stringify({
+				schema_version: "2.0",
+				exported_at: new Date().toISOString(),
+				learned_rules: [],
+				flaky_signatures: [],
+			}),
+		);
+		const r = await run(["kb", "import", bad], { cwd: ws });
+		expect(r.exitCode).toBe(1); // ExitCode.ERROR
+		const data = r.json as Record<string, unknown>;
+		expect(data.schema_incompatible).toBe(true);
+		expect(data.file_version).toBe("2.0");
+		expect(data.expected_version).toBe("0.1");
+		rmSync(ws, { recursive: true, force: true });
+	}, 30_000);
+
+	test("kb import accepts a same-major (legacy, no version) file", async () => {
+		const ws = mkdtempSync(join(tmpdir(), "failsafe-kbok-"));
+		await run(["init"], { cwd: ws });
+		const legacy = join(ws, "legacy-kb.json");
+		writeFileSync(
+			legacy,
+			JSON.stringify({
+				exported_at: new Date().toISOString(),
+				learned_rules: [],
+				flaky_signatures: [],
+			}),
+		);
+		const r = await run(["kb", "import", legacy], { cwd: ws });
+		expect(r.exitCode).toBe(0);
 		rmSync(ws, { recursive: true, force: true });
 	}, 30_000);
 });

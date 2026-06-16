@@ -1,10 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Command } from "commander";
-import type { FixOutcome, FlakyRecord, LearnedRule } from "../rules/types.js";
+import type { FlakyRecord, LearnedRule } from "../rules/types.js";
+import { SCHEMA_VERSION, checkSchemaCompatibility } from "../types/common.js";
+import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
 import { initCommand } from "./shared.js";
 
 type KbExport = {
+	schema_version?: string;
 	exported_at: string;
 	learned_rules: LearnedRule[];
 	flaky_signatures: FlakyRecord[];
@@ -32,6 +35,7 @@ export function registerKbCommand(program: Command): void {
 			const flakySignatures = store.listFlakySignatures();
 
 			const kbData: KbExport = {
+				schema_version: SCHEMA_VERSION,
 				exported_at: new Date().toISOString(),
 				learned_rules: learnedRules,
 				flaky_signatures: flakySignatures,
@@ -156,7 +160,25 @@ export function registerKbCommand(program: Command): void {
 					outOpts,
 				);
 				store.close();
-				process.exit(1);
+				process.exit(ExitCode.ERROR);
+			}
+
+			// Schema compatibility gate: reject incompatible major versions with a
+			// clear reason; accept same-major (including legacy/no-version) best-effort.
+			const compat = checkSchemaCompatibility(kbData.schema_version);
+			if (compat.action === "reject") {
+				outputResult(
+					{
+						error: true,
+						schema_incompatible: true,
+						message: compat.reason,
+						file_version: compat.version,
+						expected_version: compat.current,
+					},
+					outOpts,
+				);
+				store.close();
+				process.exit(ExitCode.ERROR);
 			}
 
 			const learnedRules = kbData.learned_rules ?? [];
