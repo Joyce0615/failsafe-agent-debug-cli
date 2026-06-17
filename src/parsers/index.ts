@@ -3,6 +3,7 @@ import { goTestParser } from "./go.js";
 import { biomeParser, eslintParser } from "./linter.js";
 import { jestParser, jsStackParser, vitestParser } from "./node.js";
 import { pytestParser, pythonTracebackParser } from "./python.js";
+import { rustParser } from "./rust.js";
 import type { FailureParser, ParserResult } from "./types.js";
 import { tscParser } from "./typescript.js";
 
@@ -20,6 +21,7 @@ const ALL_PARSERS: FailureParser[] = [
 	eslintParser,
 	biomeParser,
 	goTestParser,
+	rustParser,
 	pythonTracebackParser,
 	jsStackParser,
 ];

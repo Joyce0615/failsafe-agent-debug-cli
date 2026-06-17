@@ -1,0 +1,24 @@
+running 4 tests
+test tests::test_add ... ok
+test tests::test_divide_by_zero ... FAILED
+test tests::test_subtract ... FAILED
+test tests::test_skipped ... ignored
+
+failures:
+
+---- tests::test_divide_by_zero stdout ----
+thread 'tests::test_divide_by_zero' panicked at src/math.rs:42:9:
+attempt to divide by zero
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::test_subtract stdout ----
+thread 'tests::test_subtract' panicked at src/math.rs:58:9:
+assertion `left == right` failed
+  left: 1
+ right: 2
+
+failures:
+    tests::test_divide_by_zero
+    tests::test_subtract
+
+test result: FAILED. 1 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
