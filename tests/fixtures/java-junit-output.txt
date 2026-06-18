@@ -1,0 +1,15 @@
+[INFO] Running com.example.CalculatorTest
+[ERROR] Tests run: 4, Failures: 1, Errors: 1, Skipped: 1, Time elapsed: 0.042 s <<< FAILURE!
+java.lang.AssertionError: expected:<5> but was:<4>
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failNotEquals(Assert.java:835)
+	at com.example.Calculator.add(Calculator.java:17)
+	at com.example.CalculatorTest.testAdd(CalculatorTest.java:23)
+
+java.lang.NullPointerException: Cannot invoke "String.length()" because "input" is null
+	at com.example.Validator.validate(Validator.java:42)
+	at com.example.CalculatorTest.testValidate(CalculatorTest.java:31)
+Caused by: java.lang.IllegalStateException: validator not initialized
+	at com.example.Validator.<init>(Validator.java:12)
+
+[INFO] Tests run: 4, Failures: 1, Errors: 1, Skipped: 1
