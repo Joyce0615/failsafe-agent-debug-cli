@@ -21,6 +21,18 @@ const SECRET_PATTERN_ENTRIES: PatternEntry[] = [
 	},
 	{ name: "Bearer Token", pattern: /Bearer\s+[a-zA-Z0-9._\-]+/g },
 	{ name: "Hugging Face Token", pattern: /hf_[a-zA-Z0-9]{20,}/g },
+	{ name: "GitLab Personal Access Token", pattern: /glpat-[a-zA-Z0-9_-]{20,}/g },
+	{ name: "Google API Key", pattern: /AIza[0-9A-Za-z_-]{35}/g },
+	{ name: "Slack Token", pattern: /xox[baprs]-[a-zA-Z0-9-]{10,}/g },
+	{
+		name: "JSON Web Token",
+		pattern: /eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]+/g,
+	},
+	{
+		name: "PEM Private Key Block",
+		pattern:
+			/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g,
+	},
 	{
 		name: "Generic Password/Secret in Env",
 		pattern: /(?:PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)=[^\s]+/g,

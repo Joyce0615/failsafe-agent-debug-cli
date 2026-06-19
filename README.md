@@ -194,7 +194,7 @@ Built-in parsers (8 parsers across Python, JavaScript/TypeScript):
 ## Security
 
 - **Command policy**: Commands are validated against an allowlist. Shell operators (`&&`, `||`, `;`, `|`) are split and each sub-command is checked. Shell metacharacters (backticks, `$(...)`, `${...}`) are blocked.
-- **Secret redaction**: 11 patterns (OpenAI, Anthropic, GitHub, AWS, HF tokens, etc.) plus 30+ sensitive env var names are redacted before storage and output.
+- **Secret redaction**: 16 patterns (OpenAI, Anthropic, GitHub, GitLab, Google, Slack, AWS, HF tokens, JWTs, PEM private keys, etc.) plus 30+ sensitive env var names are redacted before storage and output.
 - **Local-first**: No cloud uploads, no telemetry, no external API calls.
 
 ## Storage

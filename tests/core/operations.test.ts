@@ -57,6 +57,26 @@ describe("analyzeCommand", () => {
 		}
 	});
 
+	test("redacts secrets in captured output BEFORE writing to disk", async () => {
+		const secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+		// Build the secret at runtime so the contiguous secret appears only in
+		// the captured OUTPUT, not in the command string echoed back (the
+		// redaction guarantee covers captured stdout/stderr, not user input).
+		const r = await analyzeCommand(
+			`node -e "console.error('token=' + 'ghp_' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij'); process.exit(1)"`,
+			config,
+			store,
+		);
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		const id = r.data.failure_id as string;
+
+		// The raw stderr persisted to disk must already be redacted.
+		const onDiskStderr = store.getRawOutput(id, "stderr") ?? "";
+		expect(onDiskStderr).not.toContain(secret);
+		expect(onDiskStderr).toContain("[REDACTED]");
+	}, 30_000);
+
 	test("passed command yields passed status", async () => {
 		const r = await analyzeCommand('node -e "process.exit(0)"', config, store);
 		expect(r.ok).toBe(true);
