@@ -2,19 +2,25 @@ import type { ContextSlice } from "../types/diagnosis.js";
 import type { ParsedError } from "../types/failure.js";
 import { evaluateBuiltinRules } from "./builtin.js";
 import { matchDeclaredRules } from "./declared.js";
-import type { DeclaredRule, LearnedRule, RuleMatchResult } from "./types.js";
+import type { DeclaredRule, LearnedRule, RuleMatchResult, ShadowedMatch } from "./types.js";
 
 export type RuleStoreInterface = {
 	getLearnedRuleByHash(hash: string): LearnedRule | null;
 };
 
 /**
- * Evaluate rules in a tiered fashion:
+ * Evaluate rules across all tiers and pick the winner by strict precedence:
  *
- *   Tier 1: Declared rules (from `.failsafe/rules.yaml`), first match wins.
- *   Tier 2: Learned rules (by signature hash lookup), must be active with confidence >= 0.5.
- *   Tier 3: Built-in rules (existing diagnosis templates).
+ *   Tier 1: Declared rules (from `.failsafe/rules.yaml`).
+ *   Tier 2: Learned rules (by signature hash, active, confidence >= 0.5).
+ *   Tier 3: Built-in rules (diagnosis templates).
  *   Tier 4: No match — returns null.
+ *
+ * Unlike a short-circuit first-match, this evaluates every tier so it can
+ * report which lower-priority rules ALSO matched but were shadowed by the
+ * winner. The winner carries a `shadowed_matches` list for transparency, which
+ * the diagnosis surfaces as uncertainty. This makes precedence auditable:
+ * a declared rule overriding a learned/builtin match is visible, not silent.
  */
 export function evaluateRules(
 	errors: ParsedError[],
@@ -23,33 +29,42 @@ export function evaluateRules(
 	store: RuleStoreInterface,
 	declaredRules: DeclaredRule[],
 ): RuleMatchResult | null {
-	// Tier 1: Declared rules
+	// Evaluate every tier independently.
 	const declaredMatch = matchDeclaredRules(errors, declaredRules);
-	if (declaredMatch) {
-		return declaredMatch;
-	}
 
-	// Tier 2: Learned rules
 	const learnedRule = store.getLearnedRuleByHash(signatureHash);
-	if (learnedRule && learnedRule.lifecycle === "active" && learnedRule.confidence >= 0.5) {
-		return {
-			rule_id: learnedRule.rule_id,
-			rule_source: "learned",
-			category: learnedRule.category,
-			summary: learnedRule.explanation.substring(0, 200),
-			explanation: learnedRule.explanation,
-			confidence: learnedRule.confidence,
-			fix: learnedRule.fix_summary,
-			fix_commands: learnedRule.fix_commands,
-		};
-	}
+	const learnedMatch: RuleMatchResult | null =
+		learnedRule && learnedRule.lifecycle === "active" && learnedRule.confidence >= 0.5
+			? {
+					rule_id: learnedRule.rule_id,
+					rule_source: "learned",
+					category: learnedRule.category,
+					summary: learnedRule.explanation.substring(0, 200),
+					explanation: learnedRule.explanation,
+					confidence: learnedRule.confidence,
+					fix: learnedRule.fix_summary,
+					fix_commands: learnedRule.fix_commands,
+				}
+			: null;
 
-	// Tier 3: Built-in rules
 	const builtinMatch = evaluateBuiltinRules(errors, contextSlices);
-	if (builtinMatch) {
-		return builtinMatch;
-	}
 
-	// Tier 4: No match
-	return null;
+	// Ordered by precedence (highest first).
+	const tiers: Array<RuleMatchResult | null> = [declaredMatch, learnedMatch, builtinMatch];
+	const winnerIndex = tiers.findIndex((t) => t !== null);
+	if (winnerIndex === -1) return null;
+
+	const winner = tiers[winnerIndex]!;
+	// Record any lower-priority tiers that also matched.
+	const shadowed: ShadowedMatch[] = [];
+	for (let i = winnerIndex + 1; i < tiers.length; i++) {
+		const t = tiers[i];
+		if (t) {
+			shadowed.push({ rule_id: t.rule_id, rule_source: t.rule_source, category: t.category });
+		}
+	}
+	if (shadowed.length > 0) {
+		return { ...winner, shadowed_matches: shadowed };
+	}
+	return winner;
 }

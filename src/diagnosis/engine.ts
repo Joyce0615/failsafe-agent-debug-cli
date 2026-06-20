@@ -128,6 +128,18 @@ export async function diagnose(
 		ruleSource = ruleMatch.rule_source;
 		ruleId = ruleMatch.rule_id;
 		enforcement = ruleMatch.enforcement;
+
+		// Surface precedence conflicts: if lower tiers also matched, note that
+		// the winning tier shadowed them so the choice is auditable.
+		if (ruleMatch.shadowed_matches && ruleMatch.shadowed_matches.length > 0) {
+			const shadowedDesc = ruleMatch.shadowed_matches
+				.map((s) => `${s.rule_source}:${s.category}`)
+				.join(", ");
+			uncertainty = [
+				...uncertainty,
+				`Winning tier '${ruleMatch.rule_source}' (${ruleMatch.rule_id}) shadowed lower-tier match(es): ${shadowedDesc}.`,
+			];
+		}
 	}
 
 	// Step 8: Build suggested next actions

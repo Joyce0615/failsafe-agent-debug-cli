@@ -95,3 +95,56 @@ describe("evaluateRules", () => {
 		expect(result).toBeNull();
 	});
 });
+
+describe("evaluateRules conflict awareness", () => {
+	const declared: DeclaredRule[] = [
+		{
+			id: "team-rule",
+			pattern: { error_type: "KeyError" },
+			diagnosis: { category: "team_key_error", explanation: "Team rule", enforcement: "suggest" },
+			confidence: 0.95,
+		},
+	];
+
+	test("declared winner records learned + builtin as shadowed", () => {
+		const store = { getLearnedRuleByHash: () => makeLearnedRule() };
+		const result = evaluateRules(errors, [], "abc123", store, declared);
+		expect(result!.rule_source).toBe("declared");
+		expect(result!.shadowed_matches).toBeDefined();
+		const sources = result!.shadowed_matches!.map((s) => s.rule_source).sort();
+		// Both the learned rule and the builtin key_error template also matched.
+		expect(sources).toContain("learned");
+		expect(sources).toContain("builtin");
+	});
+
+	test("learned winner records builtin as shadowed", () => {
+		const store = { getLearnedRuleByHash: () => makeLearnedRule() };
+		const result = evaluateRules(errors, [], "abc123", store, []);
+		expect(result!.rule_source).toBe("learned");
+		expect(result!.shadowed_matches).toBeDefined();
+		expect(result!.shadowed_matches!.some((s) => s.rule_source === "builtin")).toBe(true);
+	});
+
+	test("builtin winner has no shadowed matches", () => {
+		const store = { getLearnedRuleByHash: () => null };
+		const result = evaluateRules(errors, [], "xyz", store, []);
+		expect(result!.rule_source).toBe("builtin");
+		expect(result!.shadowed_matches).toBeUndefined();
+	});
+
+	test("declared winner with no lower matches has no shadowed list", () => {
+		const store = { getLearnedRuleByHash: () => null };
+		const unknownErrors: ParsedError[] = [{ message: "totally novel thing" }];
+		const onlyDeclared: DeclaredRule[] = [
+			{
+				id: "catch-all",
+				pattern: { error_contains: "novel" },
+				diagnosis: { category: "custom", explanation: "x", enforcement: "suggest" },
+				confidence: 0.9,
+			},
+		];
+		const result = evaluateRules(unknownErrors, [], "zzz", store, onlyDeclared);
+		expect(result!.rule_source).toBe("declared");
+		expect(result!.shadowed_matches).toBeUndefined();
+	});
+});

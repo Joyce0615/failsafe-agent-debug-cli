@@ -87,6 +87,14 @@ export type LearnedRule = z.infer<typeof LearnedRuleSchema>;
 
 // ---------- Rule Match Result ----------
 
+/** A lower-tier rule that also matched but was shadowed by the winner. */
+export const ShadowedMatchSchema = z.object({
+	rule_id: z.string(),
+	rule_source: RuleSourceSchema,
+	category: z.string(),
+});
+export type ShadowedMatch = z.infer<typeof ShadowedMatchSchema>;
+
 export const RuleMatchResultSchema = z.object({
 	rule_id: z.string(),
 	rule_source: RuleSourceSchema,
@@ -99,6 +107,8 @@ export const RuleMatchResultSchema = z.object({
 	fix_commands: z.array(z.string()).optional(),
 	evidence: z.array(z.unknown()).optional(),
 	uncertainty: z.array(z.string()).optional(),
+	/** Lower-priority rules that also matched but lost to the winning tier. */
+	shadowed_matches: z.array(ShadowedMatchSchema).optional(),
 });
 export type RuleMatchResult = z.infer<typeof RuleMatchResultSchema>;
 
