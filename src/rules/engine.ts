@@ -1,6 +1,7 @@
 import type { ContextSlice } from "../types/diagnosis.js";
 import type { ParsedError } from "../types/failure.js";
 import { evaluateBuiltinRules } from "./builtin.js";
+import { calibrateConfidence } from "./confidence.js";
 import { matchDeclaredRules } from "./declared.js";
 import type { DeclaredRule, LearnedRule, RuleMatchResult, ShadowedMatch } from "./types.js";
 
@@ -29,25 +30,40 @@ export function evaluateRules(
 	store: RuleStoreInterface,
 	declaredRules: DeclaredRule[],
 ): RuleMatchResult | null {
-	// Evaluate every tier independently.
+	// Evaluate every tier independently. Each tier's raw confidence is
+	// calibrated so values are comparable across tiers before precedence and
+	// gating decisions are made (see confidence.ts for the calibration model).
 	const declaredMatch = matchDeclaredRules(errors, declaredRules);
+	if (declaredMatch) {
+		declaredMatch.confidence = calibrateConfidence("declared", declaredMatch.confidence);
+	}
 
 	const learnedRule = store.getLearnedRuleByHash(signatureHash);
+	// Calibrate BEFORE gating: a learned rule corroborated by few occurrences is
+	// down-weighted, so the >= 0.5 floor applies to the calibrated value.
+	const learnedConfidence = learnedRule
+		? calibrateConfidence("learned", learnedRule.confidence, {
+				occurrenceCount: learnedRule.occurrence_count,
+			})
+		: 0;
 	const learnedMatch: RuleMatchResult | null =
-		learnedRule && learnedRule.lifecycle === "active" && learnedRule.confidence >= 0.5
+		learnedRule && learnedRule.lifecycle === "active" && learnedConfidence >= 0.5
 			? {
 					rule_id: learnedRule.rule_id,
 					rule_source: "learned",
 					category: learnedRule.category,
 					summary: learnedRule.explanation.substring(0, 200),
 					explanation: learnedRule.explanation,
-					confidence: learnedRule.confidence,
+					confidence: learnedConfidence,
 					fix: learnedRule.fix_summary,
 					fix_commands: learnedRule.fix_commands,
 				}
 			: null;
 
 	const builtinMatch = evaluateBuiltinRules(errors, contextSlices);
+	if (builtinMatch) {
+		builtinMatch.confidence = calibrateConfidence("builtin", builtinMatch.confidence);
+	}
 
 	// Ordered by precedence (highest first).
 	const tiers: Array<RuleMatchResult | null> = [declaredMatch, learnedMatch, builtinMatch];
