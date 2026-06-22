@@ -2,6 +2,7 @@ import type { SourceLocation } from "../types/common.js";
 import { goTestParser } from "./go.js";
 import { javaParser } from "./java.js";
 import { biomeParser, eslintParser } from "./linter.js";
+import { mochaParser } from "./mocha.js";
 import { jestParser, jsStackParser, vitestParser } from "./node.js";
 import { pytestParser, pythonTracebackParser } from "./python.js";
 import { rustParser } from "./rust.js";
@@ -18,6 +19,7 @@ const ALL_PARSERS: FailureParser[] = [
 	pytestParser,
 	jestParser,
 	vitestParser,
+	mochaParser,
 	tscParser,
 	eslintParser,
 	biomeParser,
