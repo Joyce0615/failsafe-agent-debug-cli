@@ -21,6 +21,14 @@ import { computeTokenBudget } from "../utils/tokens.js";
 import { extractRecentDiff, extractSourceSlice, extractTestSlice } from "./context.js";
 import { TEMPLATES } from "./templates.js";
 
+/**
+ * Confidence ceiling applied to a flaky signature's root cause. A recurring-
+ * after-fix failure is non-deterministic, so even a strong template/rule match
+ * is capped into the "low" band (< 0.6, see src/rules/confidence.ts) to stop an
+ * agent from acting on it with false certainty.
+ */
+const FLAKY_CONFIDENCE_CEILING = 0.3;
+
 type StoreInterface = {
 	findSimilarFailures(
 		signature: FailureSignature,
@@ -163,10 +171,23 @@ export async function diagnose(
 		recordFailureForLearning(store, signatureHash, failure.failure_id, allErrors, primaryLocation);
 	}
 
-	// Check flaky
+	// Check flaky. A signature that recurs after a prior fix is unreliable, so
+	// beyond flagging severity we (1) cap any root-cause confidence into the low
+	// band and (2) prepend an uncertainty note steering the agent to re-run
+	// before trusting the diagnosis or "fixing" a non-deterministic failure.
 	const isFlaky = checkFlaky(store, signatureHash, config?.rules?.flaky_recurrence_threshold ?? 3);
 	if (isFlaky) {
 		severity = "flaky";
+		if (rootCause) {
+			rootCause = {
+				...rootCause,
+				confidence: Math.min(rootCause.confidence, FLAKY_CONFIDENCE_CEILING),
+			};
+		}
+		uncertainty = [
+			"This signature recurred after a previous fix (flaky). Re-run the command a few times to confirm it reproduces deterministically before trusting this diagnosis or applying a fix.",
+			...uncertainty.filter((u) => u !== "No specific diagnosis template matched"),
+		];
 	}
 
 	const diagnosis: FailureDiagnosis = {
