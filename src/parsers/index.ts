@@ -1,10 +1,12 @@
 import type { SourceLocation } from "../types/common.js";
+import { cppParser } from "./cpp.js";
 import { goTestParser } from "./go.js";
 import { javaParser } from "./java.js";
 import { biomeParser, eslintParser } from "./linter.js";
 import { mochaParser } from "./mocha.js";
 import { jestParser, jsStackParser, vitestParser } from "./node.js";
 import { pytestParser, pythonTracebackParser } from "./python.js";
+import { rubyParser } from "./ruby.js";
 import { rustParser } from "./rust.js";
 import type { FailureParser, ParserResult } from "./types.js";
 import { tscParser } from "./typescript.js";
@@ -26,6 +28,8 @@ const ALL_PARSERS: FailureParser[] = [
 	goTestParser,
 	rustParser,
 	javaParser,
+	rubyParser,
+	cppParser,
 	pythonTracebackParser,
 	jsStackParser,
 ];

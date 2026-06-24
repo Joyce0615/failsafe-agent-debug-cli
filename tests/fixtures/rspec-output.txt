@@ -1,0 +1,18 @@
+Calculator
+  #add
+    returns the sum of two numbers
+  #divide
+    raises on divide by zero (FAILED - 1)
+
+Failures:
+
+  1) Calculator#divide returns the quotient
+     Failure/Error: expect(calc.divide(6, 3)).to eq(3)
+
+       expected: 3
+            got: 2
+
+     # ./spec/calculator_spec.rb:14:in `block (2 levels) in <top (required)>'
+
+Finished in 0.0123 seconds (files took 0.1 seconds to load)
+3 examples, 1 failure

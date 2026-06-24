@@ -1,0 +1,3 @@
+app/calculator.rb:7:in `divide': divided by 0 (ZeroDivisionError)
+	from app/calculator.rb:15:in `run'
+	from bin/main.rb:3:in `<main>'

@@ -1,0 +1,10 @@
+src/main.cpp:10:5: error: 'foo' was not declared in this scope
+   10 |     foo();
+      |     ^~~
+src/main.cpp:12:1: warning: control reaches end of non-void function [-Wreturn-type]
+   12 | }
+      | ^
+/usr/bin/ld: src/main.o: in function `main':
+src/main.cpp:(.text+0x1e): undefined reference to `bar()'
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:5: all] Error 1
