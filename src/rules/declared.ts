@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import type { ParsedError } from "../types/failure.js";
 import {
@@ -9,18 +9,64 @@ import {
 } from "./types.js";
 
 /**
- * Load declared rules from a YAML file (typically `.failsafe/rules.yaml`).
- * Returns an empty array if the file does not exist.
+ * Per-path cache of parsed declared rules, keyed by the rules file's mtime and
+ * size. This lets long-lived processes (the MCP server, a future watch mode)
+ * avoid re-parsing the YAML on every diagnosis while still picking up edits
+ * without a restart: when the file changes on disk, its mtime or size changes
+ * and the next load re-parses. See `reloadDeclaredRules` for an explicit hook.
  */
-export function loadDeclaredRules(rulesFilePath: string): DeclaredRule[] {
-	if (!existsSync(rulesFilePath)) {
-		return [];
-	}
+type RulesCacheEntry = { mtimeMs: number; size: number; rules: DeclaredRule[] };
+const rulesCache = new Map<string, RulesCacheEntry>();
 
+function parseRulesFile(rulesFilePath: string): DeclaredRule[] {
 	const raw = readFileSync(rulesFilePath, "utf-8");
 	const parsed = parseYaml(raw);
 	const validated = RulesFileSchema.parse(parsed);
 	return validated.rules;
+}
+
+/**
+ * Load declared rules from a YAML file (typically `.failsafe/rules.yaml`).
+ * Returns an empty array if the file does not exist.
+ *
+ * Results are cached per path and transparently hot-reloaded: if the file's
+ * mtime or size has changed since the last load, the file is re-parsed so
+ * edits take effect within the same process without a restart.
+ */
+export function loadDeclaredRules(rulesFilePath: string): DeclaredRule[] {
+	if (!existsSync(rulesFilePath)) {
+		rulesCache.delete(rulesFilePath);
+		return [];
+	}
+
+	const stat = statSync(rulesFilePath);
+	const cached = rulesCache.get(rulesFilePath);
+	if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+		return cached.rules;
+	}
+
+	const rules = parseRulesFile(rulesFilePath);
+	rulesCache.set(rulesFilePath, { mtimeMs: stat.mtimeMs, size: stat.size, rules });
+	return rules;
+}
+
+/**
+ * Force a re-read of the declared rules file, bypassing the mtime/size cache.
+ * Backs `failsafe rules reload` and is useful when an edit must be picked up
+ * immediately regardless of filesystem timestamp granularity. Returns the
+ * freshly parsed rules (or an empty array if the file does not exist).
+ */
+export function reloadDeclaredRules(rulesFilePath: string): DeclaredRule[] {
+	rulesCache.delete(rulesFilePath);
+	return loadDeclaredRules(rulesFilePath);
+}
+
+/**
+ * Clear the entire declared-rules cache. Primarily for tests and for callers
+ * that change the rules file path at runtime.
+ */
+export function clearDeclaredRulesCache(): void {
+	rulesCache.clear();
 }
 
 /**

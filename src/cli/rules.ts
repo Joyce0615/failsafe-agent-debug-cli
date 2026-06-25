@@ -1,7 +1,11 @@
 import type { Command } from "commander";
 import { TEMPLATES } from "../diagnosis/templates.js";
 import { evaluateBuiltinRules } from "../rules/builtin.js";
-import { loadDeclaredRules, validateDeclaredRules } from "../rules/declared.js";
+import {
+	loadDeclaredRules,
+	reloadDeclaredRules,
+	validateDeclaredRules,
+} from "../rules/declared.js";
 import { listFlaky } from "../rules/flaky.js";
 import { disableRule } from "../rules/lifecycle.js";
 import type { DeclaredRule, LearnedRule } from "../rules/types.js";
@@ -201,6 +205,33 @@ export function registerRulesCommand(program: Command): void {
 			if (errors.length > 0) {
 				process.exit(1);
 			}
+		});
+
+	// failsafe rules reload [--format json|text]
+	rulesCmd
+		.command("reload")
+		.description("Force a re-read of the declared rules file (hot-reload without restart)")
+		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.action(async (opts) => {
+			const config = loadConfig();
+			const outOpts = resolveOutputOptions(
+				opts,
+				config.default_format,
+				config.token_budget.max_output_bytes,
+			);
+
+			const rulesFilePath = `${process.cwd()}/${config.rules?.rules_file ?? ".failsafe/rules.yaml"}`;
+			const declared = reloadDeclaredRules(rulesFilePath);
+
+			outputResult(
+				{ reloaded: true, rules_file: rulesFilePath, rules_count: declared.length },
+				outOpts,
+				(d) => {
+					const data = d as { rules_file: string; rules_count: number };
+					return `Reloaded ${data.rules_count} declared rule(s) from ${data.rules_file}`;
+				},
+			);
 		});
 
 	// failsafe rules export-learned [--min-confidence 0.5] [--format json|text]
