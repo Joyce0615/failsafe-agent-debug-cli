@@ -9,7 +9,11 @@
 import { runCommand } from "../capture/runner.js";
 import { ExitCode } from "../cli/exit-codes.js";
 import { diagnose } from "../diagnosis/engine.js";
-import { detectAndParse, extractPrimaryLocation } from "../parsers/index.js";
+import {
+	detectAndParse,
+	extractPrimaryLocation,
+	extractRelatedLocations,
+} from "../parsers/index.js";
 import { generateRepro } from "../repro/engine.js";
 import { computeSignature } from "../repro/signatures.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
@@ -142,6 +146,7 @@ async function analyzeCommandImpl(
 		return p;
 	});
 	const primaryLocation = extractPrimaryLocation(parsed);
+	const relatedLocations = extractRelatedLocations(parsed, primaryLocation);
 
 	let status: FailureStatus = "failed";
 	if (result.exit_code === 0) status = "passed";
@@ -163,6 +168,17 @@ async function analyzeCommandImpl(
 		duration_ms: result.duration_ms,
 	};
 	if (primaryLocation) output.primary_location = primaryLocation;
+	// Surface mixed-language output: when more than one parser matched, list the
+	// languages/parsers involved and the secondary locations so an agent sees
+	// every failure source, not just the highest-precedence one.
+	if (parsed.length > 1) {
+		output.parsers = parsed.map((p) => ({
+			parser: p.parser,
+			failure_type: p.failure_type,
+			error_count: p.errors.length,
+		}));
+		if (relatedLocations.length > 0) output.related_locations = relatedLocations;
+	}
 	if (parsed[0]?.test_summary) output.test_summary = parsed[0].test_summary;
 	if (status !== "passed") {
 		output.next = buildNextActions(id, parsed[0]?.failure_type, command, !!primaryLocation);
@@ -191,7 +207,7 @@ async function analyzeCommandImpl(
 		combined_log_path: "",
 		parsed,
 		primary_location: primaryLocation,
-		related_locations: [],
+		related_locations: relatedLocations,
 		raw_artifacts: [],
 		token_budget: tokenBudget,
 	};

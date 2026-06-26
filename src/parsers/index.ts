@@ -58,34 +58,74 @@ export function detectAndParse(stdout: string, stderr: string, command: string):
 }
 
 /**
- * Extract the primary source location from parser results.
- * Uses the first error's location from the first parser result,
- * or falls back to the first application stack frame.
+ * Find the first usable source location within a single parser result,
+ * preferring an explicit `location` and falling back to the first application
+ * stack frame.
  */
-export function extractPrimaryLocation(results: ParserResult[]): SourceLocation | undefined {
-	for (const result of results) {
-		for (const error of result.errors) {
-			// Prefer the explicit location field
-			if (error.location) {
-				return error.location;
-			}
-
-			// Fall back to the first application stack frame
-			if (error.stack_frames) {
-				const appFrame = error.stack_frames.find((f) => f.is_application);
-				if (appFrame) {
-					return {
-						file: appFrame.file,
-						line: appFrame.line,
-						column: appFrame.column,
-						symbol: appFrame.function,
-					};
-				}
+function locationFromResult(result: ParserResult): SourceLocation | undefined {
+	for (const error of result.errors) {
+		if (error.location) {
+			return error.location;
+		}
+		if (error.stack_frames) {
+			const appFrame = error.stack_frames.find((f) => f.is_application);
+			if (appFrame) {
+				return {
+					file: appFrame.file,
+					line: appFrame.line,
+					column: appFrame.column,
+					symbol: appFrame.function,
+				};
 			}
 		}
 	}
-
 	return undefined;
+}
+
+function sameLocation(a: SourceLocation, b: SourceLocation): boolean {
+	return a.file === b.file && a.line === b.line && a.column === b.column;
+}
+
+/**
+ * Extract the primary source location from parser results.
+ *
+ * `detectAndParse` returns results in `ALL_PARSERS` precedence (most specific
+ * parser first), so the primary location is the first usable location from the
+ * highest-precedence parser that matched. For genuinely mixed-language output
+ * (e.g. a monorepo command emitting both a tsc error and a pytest failure) this
+ * is the clearly-ranked primary; the other languages are surfaced via
+ * {@link extractRelatedLocations}.
+ */
+export function extractPrimaryLocation(results: ParserResult[]): SourceLocation | undefined {
+	for (const result of results) {
+		const loc = locationFromResult(result);
+		if (loc) {
+			return loc;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Collect one representative location per *additional* parser result beyond the
+ * one that produced the primary location. This surfaces every language present
+ * in mixed output. Locations duplicating the primary or an already-collected
+ * related location are skipped so the list stays compact.
+ */
+export function extractRelatedLocations(
+	results: ParserResult[],
+	primary?: SourceLocation,
+): SourceLocation[] {
+	const primaryLoc = primary ?? extractPrimaryLocation(results);
+	const related: SourceLocation[] = [];
+	for (const result of results) {
+		const loc = locationFromResult(result);
+		if (!loc) continue;
+		if (primaryLoc && sameLocation(loc, primaryLoc)) continue;
+		if (related.some((r) => sameLocation(r, loc))) continue;
+		related.push(loc);
+	}
+	return related;
 }
 
 export { ALL_PARSERS };

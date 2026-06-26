@@ -1,0 +1,25 @@
+> tsc --noEmit && pytest
+
+src/auth.ts(42,17): error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+  Type 'undefined' is not assignable to type 'string'.
+
+Found 1 error in 1 file.
+
+============================= test session starts ==============================
+platform linux -- Python 3.12.0, pytest-8.1.0, pluggy-1.4.0
+rootdir: /project
+collected 12 items
+
+tests/test_auth.py ..F.                                                  [ 33%]
+
+=================================== FAILURES ===================================
+________________________________ test_missing_email ____________________________
+
+    def create_user_from_oauth(payload):
+>       email = payload["email"]
+E       KeyError: 'email'
+
+src/auth.py:88: KeyError
+=========================== short test summary info ============================
+FAILED tests/test_auth.py::test_missing_email - KeyError: 'email'
+========================= 1 failed, 11 passed in 2.34s ========================
