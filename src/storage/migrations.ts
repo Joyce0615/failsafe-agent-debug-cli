@@ -183,6 +183,17 @@ export const MIGRATIONS: Migration[] = [
 			CREATE INDEX IF NOT EXISTS idx_learning_ledger_hash ON learning_ledger(signature_hash);
 		`,
 	},
+	{
+		version: 4,
+		name: "diagnosis_cache",
+		up: `
+			CREATE TABLE IF NOT EXISTS diagnosis_cache (
+				cache_key TEXT PRIMARY KEY,
+				packet TEXT NOT NULL,
+				created_at TEXT NOT NULL
+			);
+		`,
+	},
 ];
 
 export function runMigrations(db: Database): void {

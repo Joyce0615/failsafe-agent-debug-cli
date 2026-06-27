@@ -18,6 +18,7 @@ import type { FailureRecord, ParsedError } from "../types/failure.js";
 import type { FailureSignature } from "../types/repro.js";
 import { diagnosisId } from "../utils/id.js";
 import { computeTokenBudget } from "../utils/tokens.js";
+import { diagnosisCacheKey } from "./cache.js";
 import { extractRecentDiff, extractSourceSlice, extractTestSlice } from "./context.js";
 import { TEMPLATES } from "./templates.js";
 
@@ -44,6 +45,11 @@ type StoreInterface = {
 	getFlakySignature(hash: string): import("../rules/types.js").FlakyRecord | null;
 	upsertFlakySignature(record: import("../rules/types.js").FlakyRecord): void;
 	listFlakySignatures(): import("../rules/types.js").FlakyRecord[];
+	// Optional diagnosis cache keyed by signature hash + rule/schema fingerprint.
+	// When present, an identical signature can be served without re-running the
+	// expensive context-extraction, git-diff, and rule-evaluation steps.
+	getCachedDiagnosis?(cacheKey: string): FailureDiagnosis | null;
+	saveCachedDiagnosis?(cacheKey: string, diagnosis: FailureDiagnosis): void;
 };
 
 export async function diagnose(
@@ -57,6 +63,33 @@ export async function diagnose(
 
 	// Step 2: Primary location is already on the record
 	const primaryLocation = failure.primary_location;
+
+	// Compute the signature + cache key up front so an identical, non-flaky
+	// signature can short-circuit the expensive context/git-diff/rule steps.
+	const signatureHash = computeSignatureHash(allErrors, primaryLocation);
+	const rulesFilePath = `${failure.cwd}/${config?.rules?.rules_file ?? ".failsafe/rules.yaml"}`;
+	const declaredRules = loadDeclaredRules(rulesFilePath);
+	const cacheKey = diagnosisCacheKey(signatureHash, declaredRules);
+
+	// Record for learning first (idempotent via the learning ledger) so a cache
+	// hit below does not stop occurrence counts from growing.
+	if (config?.rules?.auto_learn !== false) {
+		recordFailureForLearning(store, signatureHash, failure.failure_id, allErrors, primaryLocation);
+	}
+
+	// A signature that recurs after a prior fix is non-deterministic; such
+	// failures are never served from (or written to) the cache so their packet
+	// always reflects current flaky state.
+	const isFlaky = checkFlaky(store, signatureHash, config?.rules?.flaky_recurrence_threshold ?? 3);
+
+	if (!isFlaky) {
+		const cached = store.getCachedDiagnosis?.(cacheKey);
+		if (cached) {
+			// Re-stamp the cached packet for this specific failure; everything else
+			// is signature-determined and therefore identical.
+			return { ...cached, failure_id: failure.failure_id };
+		}
+	}
 
 	// Step 3: Extract source context at primary location
 	const contextSlices: ContextSlice[] = [];
@@ -110,9 +143,6 @@ export async function diagnose(
 	}
 
 	// Step 7: Evaluate rules in tiered order
-	const signatureHash = computeSignatureHash(allErrors, primaryLocation);
-	const rulesFilePath = `${failure.cwd}/${config?.rules?.rules_file ?? ".failsafe/rules.yaml"}`;
-	const declaredRules = loadDeclaredRules(rulesFilePath);
 	const ruleMatch = evaluateRules(allErrors, contextSlices, signatureHash, store, declaredRules);
 
 	let summary = allErrors[0]?.message ?? "Unknown failure";
@@ -166,16 +196,10 @@ export async function diagnose(
 	const rawStderr = store.getRawOutput(failure.failure_id, "stderr") ?? "";
 	const rawBytes = Buffer.byteLength(rawStdout) + Buffer.byteLength(rawStderr);
 
-	// Record for learning (after diagnosis)
-	if (config?.rules?.auto_learn !== false) {
-		recordFailureForLearning(store, signatureHash, failure.failure_id, allErrors, primaryLocation);
-	}
-
-	// Check flaky. A signature that recurs after a prior fix is unreliable, so
-	// beyond flagging severity we (1) cap any root-cause confidence into the low
-	// band and (2) prepend an uncertainty note steering the agent to re-run
-	// before trusting the diagnosis or "fixing" a non-deterministic failure.
-	const isFlaky = checkFlaky(store, signatureHash, config?.rules?.flaky_recurrence_threshold ?? 3);
+	// Flaky downgrade (isFlaky computed up front). A signature that recurs after
+	// a prior fix is unreliable, so beyond flagging severity we (1) cap any
+	// root-cause confidence into the low band and (2) prepend an uncertainty note
+	// steering the agent to re-run before trusting or "fixing" it.
 	if (isFlaky) {
 		severity = "flaky";
 		if (rootCause) {
@@ -209,6 +233,11 @@ export async function diagnose(
 
 	const diagBytes = Buffer.byteLength(JSON.stringify(diagnosis));
 	diagnosis.token_budget = computeTokenBudget(rawBytes, diagBytes);
+
+	// Cache the freshly computed packet for identical, non-flaky signatures.
+	if (!isFlaky) {
+		store.saveCachedDiagnosis?.(cacheKey, diagnosis);
+	}
 
 	return diagnosis;
 }

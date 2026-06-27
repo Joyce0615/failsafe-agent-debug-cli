@@ -628,6 +628,29 @@ export class FailsafeSqlite {
 		);
 	}
 
+	// --------------- Diagnosis cache ---------------
+
+	/** Look up a cached diagnosis packet by its signature/rule/schema cache key. */
+	getCachedDiagnosis(cacheKey: string): FailureDiagnosis | null {
+		const row = this.db
+			.query("SELECT packet FROM diagnosis_cache WHERE cache_key = ?")
+			.get(cacheKey) as { packet: string } | null;
+		if (!row) return null;
+		try {
+			return JSON.parse(row.packet) as FailureDiagnosis;
+		} catch {
+			return null;
+		}
+	}
+
+	/** Store a diagnosis packet under its cache key (idempotent overwrite). */
+	saveCachedDiagnosis(cacheKey: string, diagnosis: FailureDiagnosis): void {
+		this.db.run(
+			"INSERT OR REPLACE INTO diagnosis_cache (cache_key, packet, created_at) VALUES (?, ?, ?)",
+			[cacheKey, JSON.stringify(diagnosis), new Date().toISOString()],
+		);
+	}
+
 	// --------------- Lifecycle ---------------
 
 	close(): void {

@@ -89,6 +89,20 @@ export class FailsafeStore {
 	}
 
 	/**
+	 * Looks up a cached diagnosis packet by its signature/rule/schema cache key.
+	 */
+	getCachedDiagnosis(cacheKey: string): FailureDiagnosis | null {
+		return this.sqlite.getCachedDiagnosis(cacheKey);
+	}
+
+	/**
+	 * Stores a diagnosis packet under its cache key for later reuse.
+	 */
+	saveCachedDiagnosis(cacheKey: string, diagnosis: FailureDiagnosis): void {
+		this.sqlite.saveCachedDiagnosis(cacheKey, diagnosis);
+	}
+
+	/**
 	 * Saves a repro record: writes JSON to disk and inserts into the database.
 	 */
 	saveRepro(repro: ReproRecord): void {
