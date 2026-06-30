@@ -19,6 +19,15 @@ import { computeSignature } from "../repro/signatures.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { redactSecrets } from "../security/redaction.js";
 import type { FailsafeStore } from "../storage/store.js";
+import {
+	diagnoseSpanAttributes,
+	parseSpanAttributes,
+	reproSpanAttributes,
+	runErrorSpanAttributes,
+	runSpanAttributes,
+	verifyErrorSpanAttributes,
+	verifySpanAttributes,
+} from "../telemetry/attributes.js";
 import { withSpan } from "../telemetry/otel.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 import type { FailsafeConfig } from "../types/config.js";
@@ -67,19 +76,9 @@ export async function analyzeCommand(
 	return withSpan("failsafe.run", async (setAttrs) => {
 		const result = await analyzeCommandImpl(command, config, store, opts);
 		if (result.ok) {
-			const d = result.data;
-			const tb = d.token_budget as
-				| { raw_output_bytes?: number; compression_ratio?: number }
-				| undefined;
-			setAttrs({
-				status: d.status as string,
-				failure_type: d.failure_type as string,
-				exit_code: d.exit_code as number,
-				raw_output_bytes: tb?.raw_output_bytes,
-				compression_ratio: tb?.compression_ratio,
-			});
+			setAttrs(runSpanAttributes(result.data));
 		} else {
-			setAttrs({ status: "error", error_code: result.error.exit_code });
+			setAttrs(runErrorSpanAttributes(result.error));
 		}
 		return result;
 	});
@@ -138,11 +137,7 @@ async function analyzeCommandImpl(
 
 	const parsed = await withSpan("failsafe.parse", async (setAttrs) => {
 		const p = detectAndParse(redactedStdout, redactedStderr, command);
-		setAttrs({
-			parser_matched: p[0]?.parser,
-			failure_type: p[0]?.failure_type,
-			parser_count: p.length,
-		});
+		setAttrs(parseSpanAttributes(p));
 		return p;
 	});
 	const primaryLocation = extractPrimaryLocation(parsed);
@@ -239,13 +234,7 @@ export async function diagnoseFailure(
 
 		const diagnosis = await diagnose(failure, store, config);
 		store.saveDiagnosis(diagnosis);
-		setAttrs({
-			failure_type: diagnosis.failure_type,
-			severity: diagnosis.severity,
-			category: diagnosis.root_cause?.category,
-			confidence: diagnosis.root_cause?.confidence,
-			rule_source: diagnosis.rule_source,
-		});
+		setAttrs(diagnoseSpanAttributes(diagnosis));
 		return { ok: true, data: diagnosis };
 	});
 }
@@ -268,7 +257,7 @@ export async function reproFailure(
 			cwd: failure.cwd,
 		});
 
-		setAttrs({ status: repro.status, kind: repro.kind, confidence: repro.confidence });
+		setAttrs(reproSpanAttributes(repro));
 		return {
 			ok: true,
 			data: {
@@ -295,9 +284,9 @@ export async function verifyFailure(
 	return withSpan("failsafe.verify", async (setAttrs) => {
 		const result = await verifyFailureImpl(rawId, store, config, opts);
 		if (result.ok) {
-			setAttrs({ status: result.data.status as string });
+			setAttrs(verifySpanAttributes(result.data));
 		} else {
-			setAttrs({ status: "error", error_code: result.error.exit_code });
+			setAttrs(verifyErrorSpanAttributes(result.error));
 		}
 		return result;
 	});
