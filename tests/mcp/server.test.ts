@@ -35,6 +35,11 @@ async function callTool(
 	};
 }
 
+/** Read the text body of a resource content entry (vs. the binary `blob` variant). */
+function resourceText(content: unknown): string {
+	return String((content as { text?: unknown }).text);
+}
+
 beforeAll(async () => {
 	originalCwd = process.cwd();
 	workDir = mkdtempSync(join(tmpdir(), "failsafe-mcp-"));
@@ -153,5 +158,76 @@ describe("MCP server: failsafe_verify", () => {
 		expect(Array.isArray(json.checks)).toBe(true);
 		// Original command still exits 1, so verification fails.
 		expect(json.status).toBe("failed");
+	}, 30_000);
+});
+
+describe("MCP server: resources", () => {
+	test("advertises the diagnosis and run-log resource templates", async () => {
+		const { resourceTemplates } = await client.listResourceTemplates();
+		const templates = resourceTemplates.map((r) => r.uriTemplate).sort();
+		expect(templates).toEqual(["failsafe://diagnosis/{failure_id}", "failsafe://log/{failure_id}"]);
+	});
+
+	test("lists recent failures as diagnosis resources", async () => {
+		await callTool("failsafe_analyze", { command: "python3 -c \"raise KeyError('res')\"" });
+		const { resources } = await client.listResources();
+		const diagnosisResources = resources.filter((r) => r.uri.startsWith("failsafe://diagnosis/"));
+		expect(diagnosisResources.length).toBeGreaterThan(0);
+		expect(diagnosisResources[0].mimeType).toBe("application/json");
+	}, 30_000);
+
+	test("reads a diagnosis resource by uri (diagnoses on demand)", async () => {
+		const { json } = await callTool("failsafe_analyze", {
+			command: "python3 -c \"raise KeyError('readres')\"",
+		});
+		const failureId = json.failure_id as string;
+		const res = await client.readResource({ uri: `failsafe://diagnosis/${failureId}` });
+		expect(res.contents).toHaveLength(1);
+		expect(res.contents[0].mimeType).toBe("application/json");
+		const packet = JSON.parse(resourceText(res.contents[0])) as Record<string, unknown>;
+		expect(packet.diagnosis_id).toBeDefined();
+		expect(packet.failure_id).toBe(failureId);
+		expect(packet.severity).toBeDefined();
+	}, 30_000);
+
+	test("reads a run-log resource as plain text", async () => {
+		const { json } = await callTool("failsafe_analyze", {
+			command: "python3 -c \"raise KeyError('logres')\"",
+		});
+		const failureId = json.failure_id as string;
+		const res = await client.readResource({ uri: `failsafe://log/${failureId}` });
+		expect(res.contents[0].mimeType).toBe("text/plain");
+		expect(resourceText(res.contents[0])).toContain("KeyError");
+	}, 30_000);
+
+	test("reading a log for an unknown failure reports not found", async () => {
+		const res = await client.readResource({ uri: "failsafe://log/fail_missing" });
+		expect(resourceText(res.contents[0])).toContain("not found");
+	});
+});
+
+describe("MCP server: prompts", () => {
+	test("advertises the diagnose-and-fix prompt with its argument", async () => {
+		const { prompts } = await client.listPrompts();
+		const prompt = prompts.find((p) => p.name === "failsafe_diagnose_and_fix");
+		expect(prompt).toBeDefined();
+		expect(prompt?.arguments?.some((a) => a.name === "failure_id")).toBe(true);
+	});
+
+	test("get prompt seeds the fix loop with the diagnosis packet", async () => {
+		const { json } = await callTool("failsafe_analyze", {
+			command: "python3 -c \"raise KeyError('prompt')\"",
+		});
+		const failureId = json.failure_id as string;
+		const result = await client.getPrompt({
+			name: "failsafe_diagnose_and_fix",
+			arguments: { failure_id: failureId },
+		});
+		expect(result.messages).toHaveLength(1);
+		const content = result.messages[0].content as { type: string; text: string };
+		expect(content.type).toBe("text");
+		expect(content.text).toContain(failureId);
+		expect(content.text).toContain("Diagnosis packet:");
+		expect(content.text).toContain("failsafe_verify");
 	}, 30_000);
 });

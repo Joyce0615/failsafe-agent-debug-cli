@@ -7,9 +7,16 @@
  * checkpoints. Each tool returns the SAME JSON contract as the equivalent CLI
  * command — the implementations are shared via src/core/operations.ts.
  *
+ * Beyond tools, the server also exposes:
+ *   - Resources: a stored failure's diagnosis (`failsafe://diagnosis/{id}`,
+ *     diagnosed on demand) and its captured run log (`failsafe://log/{id}`),
+ *     so orchestrators can pull context without issuing a tool call.
+ *   - A prompt: a guided "diagnose then fix" workflow seeded with the current
+ *     diagnosis packet.
+ *
  * Transport: stdio. Run with `failsafe-mcp` or `bun src/mcp/server.ts`.
  */
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { createStore, loadConfig } from "../cli/shared.js";
@@ -128,6 +135,156 @@ export function createFailsafeMcpServer(): McpServer {
 						timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
 					}),
 				);
+			} finally {
+				store.close();
+			}
+		},
+	);
+
+	// ─── Resources ──────────────────────────────────────────────────────────
+	// Orchestrators can read a failure's diagnosis or raw log by URI instead of
+	// issuing a tool call. Both list the most recent failures for discovery.
+	const RECENT_LIMIT = 20;
+
+	server.registerResource(
+		"failsafe_diagnosis",
+		new ResourceTemplate("failsafe://diagnosis/{failure_id}", {
+			list: () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					return {
+						resources: store.listFailures({ limit: RECENT_LIMIT }).map((f) => ({
+							uri: `failsafe://diagnosis/${f.failure_id}`,
+							name: `Diagnosis: ${f.command}`,
+							description: `Root-cause packet for ${f.failure_id} (${f.status})`,
+							mimeType: "application/json",
+						})),
+					};
+				} finally {
+					store.close();
+				}
+			},
+		}),
+		{
+			title: "Failure diagnosis",
+			description:
+				"Structured root-cause packet for a stored failure as JSON, diagnosed on demand if not already computed. Same contract as `failsafe diagnose`.",
+			mimeType: "application/json",
+		},
+		async (uri, variables) => {
+			const failureId = String(variables.failure_id);
+			const config = loadConfig();
+			const store = createStore(config);
+			try {
+				const result = await diagnoseFailure(failureId, store, config);
+				const payload = result.ok ? result.data : result.error;
+				return {
+					contents: [
+						{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(payload, null, 2) },
+					],
+				};
+			} finally {
+				store.close();
+			}
+		},
+	);
+
+	server.registerResource(
+		"failsafe_run_log",
+		new ResourceTemplate("failsafe://log/{failure_id}", {
+			list: () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					return {
+						resources: store.listFailures({ limit: RECENT_LIMIT }).map((f) => ({
+							uri: `failsafe://log/${f.failure_id}`,
+							name: `Log: ${f.command}`,
+							description: `Captured stdout/stderr for ${f.failure_id} (${f.status})`,
+							mimeType: "text/plain",
+						})),
+					};
+				} finally {
+					store.close();
+				}
+			},
+		}),
+		{
+			title: "Run log",
+			description:
+				"Captured (secret-redacted) stdout and stderr for a stored failure as plain text.",
+			mimeType: "text/plain",
+		},
+		async (uri, variables) => {
+			const failureId = String(variables.failure_id);
+			const config = loadConfig();
+			const store = createStore(config);
+			try {
+				const failure = store.getFailure(failureId);
+				if (!failure) {
+					return {
+						contents: [
+							{ uri: uri.href, mimeType: "text/plain", text: `Failure not found: ${failureId}` },
+						],
+					};
+				}
+				const stdout = store.getRawOutput(failure.failure_id, "stdout") ?? "";
+				const stderr = store.getRawOutput(failure.failure_id, "stderr") ?? "";
+				const parts: string[] = [];
+				if (stdout) parts.push(`--- stdout ---\n${stdout}`);
+				if (stderr) parts.push(`--- stderr ---\n${stderr}`);
+				const text = parts.join("\n") || "(no captured output)";
+				return { contents: [{ uri: uri.href, mimeType: "text/plain", text }] };
+			} finally {
+				store.close();
+			}
+		},
+	);
+
+	// ─── Prompts ────────────────────────────────────────────────────────────
+	// A guided fix loop seeded with the current diagnosis so an agent has the
+	// root-cause context inline before it starts editing.
+	server.registerPrompt(
+		"failsafe_diagnose_and_fix",
+		{
+			title: "Diagnose then fix",
+			description:
+				"Guided workflow: diagnose a stored failure, apply a minimal fix, and verify it. Embeds the current diagnosis packet as context.",
+			argsSchema: {
+				failure_id: z.string().describe("Failure id, or 'last' for the most recent failure"),
+			},
+		},
+		async ({ failure_id }) => {
+			const config = loadConfig();
+			const store = createStore(config);
+			try {
+				const result = await diagnoseFailure(failure_id, store, config);
+				const context = result.ok
+					? JSON.stringify(result.data, null, 2)
+					: `No diagnosis available: ${(result.error as { message?: string }).message ?? "unknown failure"}`;
+				return {
+					messages: [
+						{
+							role: "user",
+							content: {
+								type: "text",
+								text: [
+									`You are fixing a failing command captured by Failsafe (failure ${failure_id}).`,
+									"",
+									"Diagnosis packet:",
+									context,
+									"",
+									"Follow this loop:",
+									"1. Read root_cause and minimal_context to locate the defect.",
+									"2. Apply the smallest change that addresses the root cause.",
+									`3. Confirm with the failsafe_verify tool on failure_id "${failure_id}".`,
+									"4. If verify still fails, refine the fix and repeat. Do not broaden scope beyond the root cause.",
+								].join("\n"),
+							},
+						},
+					],
+				};
 			} finally {
 				store.close();
 			}
