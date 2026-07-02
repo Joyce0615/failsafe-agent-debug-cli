@@ -108,8 +108,9 @@ export class FailsafeSqlite {
 			`INSERT OR REPLACE INTO diagnoses (
 				diagnosis_id, failure_id, created_at, failure_type, severity, summary,
 				root_cause_category, root_cause_explanation, root_cause_confidence,
-				evidence, uncertainty, suggested_actions, minimal_context, token_budget
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				evidence, uncertainty, suggested_actions, minimal_context, token_budget,
+				rule_source, rule_id, enforcement
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				diag.diagnosis_id,
 				diag.failure_id,
@@ -125,6 +126,9 @@ export class FailsafeSqlite {
 				JSON.stringify(diag.suggested_next_actions),
 				JSON.stringify(diag.minimal_context),
 				diag.token_budget ? JSON.stringify(diag.token_budget) : null,
+				diag.rule_source ?? null,
+				diag.rule_id ?? null,
+				diag.enforcement ?? null,
 			],
 		);
 	}
@@ -742,6 +746,9 @@ export class FailsafeSqlite {
 			suggested_next_actions: suggestedActions,
 			minimal_context: minimalContext,
 			token_budget: tokenBudget,
+			rule_source: (row.rule_source ?? undefined) as FailureDiagnosis["rule_source"],
+			rule_id: row.rule_id ?? undefined,
+			enforcement: (row.enforcement ?? undefined) as FailureDiagnosis["enforcement"],
 		};
 	}
 
@@ -888,6 +895,9 @@ interface DiagnosisRow {
 	suggested_actions: string | null;
 	minimal_context: string | null;
 	token_budget: string | null;
+	rule_source: string | null;
+	rule_id: string | null;
+	enforcement: string | null;
 }
 
 interface ReproRow {

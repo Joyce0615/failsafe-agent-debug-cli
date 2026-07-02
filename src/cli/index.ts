@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
+import { registerApplyCommand } from "./apply.js";
 import { registerConfigCommand, registerInitCommand } from "./config.js";
 import { registerDebugCommand } from "./debug.js";
 import { registerDiagnoseCommand } from "./diagnose.js";
@@ -38,6 +39,7 @@ registerStepCommand(program);
 registerInspectCommand(program);
 registerVerifyCommand(program);
 registerExplainCommand(program);
+registerApplyCommand(program);
 
 // Phase 3: Tiered Rules
 registerResolveCommand(program);
