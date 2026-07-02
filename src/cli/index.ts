@@ -16,6 +16,7 @@ import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
 import { registerStepCommand } from "./step.js";
 import { registerVerifyCommand } from "./verify.js";
+import { registerWatchCommand } from "./watch.js";
 
 const program = new Command()
 	.name("failsafe")
@@ -40,6 +41,7 @@ registerInspectCommand(program);
 registerVerifyCommand(program);
 registerExplainCommand(program);
 registerApplyCommand(program);
+registerWatchCommand(program);
 
 // Phase 3: Tiered Rules
 registerResolveCommand(program);
