@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
 import { registerApplyCommand } from "./apply.js";
+import { registerAutofixCommand } from "./autofix.js";
 import { registerConfigCommand, registerInitCommand } from "./config.js";
 import { registerDebugCommand } from "./debug.js";
 import { registerDiagnoseCommand } from "./diagnose.js";
@@ -41,6 +42,7 @@ registerInspectCommand(program);
 registerVerifyCommand(program);
 registerExplainCommand(program);
 registerApplyCommand(program);
+registerAutofixCommand(program);
 registerWatchCommand(program);
 
 // Phase 3: Tiered Rules
