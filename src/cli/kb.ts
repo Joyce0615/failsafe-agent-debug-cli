@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Command } from "commander";
 import type { FlakyRecord, LearnedRule } from "../rules/types.js";
+import type { FailsafeStore } from "../storage/store.js";
 import { SCHEMA_VERSION, checkSchemaCompatibility } from "../types/common.js";
+import { KNOWN_DIAGNOSIS_CATEGORIES } from "../types/diagnosis.js";
 import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
 import { initCommand } from "./shared.js";
@@ -12,6 +14,176 @@ type KbExport = {
 	learned_rules: LearnedRule[];
 	flaky_signatures: FlakyRecord[];
 };
+
+/** Tunable thresholds for the dataset readiness gate. */
+export type DatasetThresholds = {
+	/** Minimum number of labeled samples before the corpus is usable. */
+	min_samples: number;
+	/** Minimum distinct categories represented (class diversity). */
+	min_categories: number;
+	/** Maximum acceptable class-imbalance ratio (largest/smallest class). */
+	max_imbalance_ratio: number;
+	/** Maximum acceptable duplicate-signature rate (0..1). */
+	max_dedupe_rate: number;
+	/** Minimum fraction of samples that carry a category label (0..1). */
+	min_labeled_fraction: number;
+	/** Confidence below this counts as a low-confidence (noisy) label. */
+	low_confidence: number;
+};
+
+export const DEFAULT_DATASET_THRESHOLDS: DatasetThresholds = {
+	min_samples: 20,
+	min_categories: 2,
+	max_imbalance_ratio: 10,
+	max_dedupe_rate: 0.5,
+	min_labeled_fraction: 0.8,
+	low_confidence: 0.6,
+};
+
+export type DatasetStats = {
+	total_samples: number;
+	with_diagnosis: number;
+	labeled: number;
+	unlabeled: number;
+	success: number;
+	/** Recorded fixes whose verification did not pass (noisy labels). */
+	resolved_unverified: number;
+	/** Per-known-category counts (every known category present, 0-filled). */
+	category_counts: Record<string, number>;
+	/** Labels seen that are NOT in KNOWN_DIAGNOSIS_CATEGORIES. */
+	unknown_categories: Record<string, number>;
+	distinct_categories: number;
+	largest_class_share: number;
+	imbalance_ratio: number | null;
+	unique_signatures: number;
+	duplicate_signatures: number;
+	dedupe_rate: number;
+	avg_confidence: number | null;
+	low_confidence: number;
+	readiness: { ready: boolean; reasons: string[] };
+	thresholds: DatasetThresholds;
+};
+
+/**
+ * Compute training-data quality metrics over the resolved failure/fix corpus
+ * (the same rows `kb export-dataset` emits). Pure of process.exit/console so it
+ * is unit-testable; the CLI wrapper maps it to output + an optional gate exit.
+ */
+export function computeDatasetStats(
+	store: FailsafeStore,
+	opts: { successOnly?: boolean; thresholds?: Partial<DatasetThresholds> } = {},
+): DatasetStats {
+	const thresholds = { ...DEFAULT_DATASET_THRESHOLDS, ...opts.thresholds };
+	const outcomes = store.listFixOutcomes({ successOnly: opts.successOnly });
+
+	const categoryCounts: Record<string, number> = {};
+	for (const c of KNOWN_DIAGNOSIS_CATEGORIES) categoryCounts[c] = 0;
+	const unknownCategories: Record<string, number> = {};
+
+	let total = 0;
+	let withDiagnosis = 0;
+	let labeled = 0;
+	let successCount = 0;
+	let unverified = 0;
+	let confidenceSum = 0;
+	let confidenceCount = 0;
+	let lowConfidence = 0;
+	const signatureSeen = new Map<string, number>();
+
+	for (const outcome of outcomes) {
+		const failure = store.getFailure(outcome.failure_id);
+		if (!failure) continue; // mirrors export-dataset: a row needs a backing failure
+		total++;
+
+		if (outcome.success) successCount++;
+		else unverified++;
+
+		signatureSeen.set(outcome.signature_hash, (signatureSeen.get(outcome.signature_hash) ?? 0) + 1);
+
+		const diagnosis = store.getDiagnosis(outcome.failure_id);
+		if (diagnosis) withDiagnosis++;
+		const category = diagnosis?.root_cause?.category;
+		if (category) {
+			labeled++;
+			if (category in categoryCounts) {
+				categoryCounts[category]++;
+			} else {
+				unknownCategories[category] = (unknownCategories[category] ?? 0) + 1;
+			}
+		}
+		const confidence = diagnosis?.root_cause?.confidence;
+		if (typeof confidence === "number") {
+			confidenceSum += confidence;
+			confidenceCount++;
+			if (confidence < thresholds.low_confidence) lowConfidence++;
+		}
+	}
+
+	// Represented classes span both known and unknown labels.
+	const representedCounts = [
+		...Object.values(categoryCounts).filter((n) => n > 0),
+		...Object.values(unknownCategories),
+	];
+	const distinctCategories = representedCounts.length;
+	const maxClass = representedCounts.length > 0 ? Math.max(...representedCounts) : 0;
+	const minClass = representedCounts.length > 0 ? Math.min(...representedCounts) : 0;
+	const imbalanceRatio = minClass > 0 ? maxClass / minClass : null;
+	const largestClassShare = labeled > 0 ? maxClass / labeled : 0;
+
+	const uniqueSignatures = signatureSeen.size;
+	const duplicateSignatures = total - uniqueSignatures;
+	const dedupeRate = total > 0 ? duplicateSignatures / total : 0;
+	const avgConfidence = confidenceCount > 0 ? confidenceSum / confidenceCount : null;
+	const labeledFraction = total > 0 ? labeled / total : 0;
+
+	// Readiness gate: collect every failing condition so the classifier work
+	// (item 3) gets actionable reasons, not just a boolean.
+	const reasons: string[] = [];
+	if (labeled < thresholds.min_samples) {
+		reasons.push(`Only ${labeled} labeled sample(s); need >= ${thresholds.min_samples}.`);
+	}
+	if (distinctCategories < thresholds.min_categories) {
+		reasons.push(
+			`Only ${distinctCategories} distinct categor(ies); need >= ${thresholds.min_categories}.`,
+		);
+	}
+	if (labeledFraction < thresholds.min_labeled_fraction) {
+		reasons.push(
+			`Labeled fraction ${labeledFraction.toFixed(2)} below ${thresholds.min_labeled_fraction}.`,
+		);
+	}
+	if (imbalanceRatio !== null && imbalanceRatio > thresholds.max_imbalance_ratio) {
+		reasons.push(
+			`Class imbalance ratio ${imbalanceRatio.toFixed(1)} exceeds ${thresholds.max_imbalance_ratio}.`,
+		);
+	}
+	if (dedupeRate > thresholds.max_dedupe_rate) {
+		reasons.push(
+			`Duplicate-signature rate ${dedupeRate.toFixed(2)} exceeds ${thresholds.max_dedupe_rate}.`,
+		);
+	}
+
+	return {
+		total_samples: total,
+		with_diagnosis: withDiagnosis,
+		labeled,
+		unlabeled: total - labeled,
+		success: successCount,
+		resolved_unverified: unverified,
+		category_counts: categoryCounts,
+		unknown_categories: unknownCategories,
+		distinct_categories: distinctCategories,
+		largest_class_share: largestClassShare,
+		imbalance_ratio: imbalanceRatio,
+		unique_signatures: uniqueSignatures,
+		duplicate_signatures: duplicateSignatures,
+		dedupe_rate: dedupeRate,
+		avg_confidence: avgConfidence,
+		low_confidence: lowConfidence,
+		readiness: { ready: reasons.length === 0, reasons },
+		thresholds,
+	};
+}
 
 export function registerKbCommand(program: Command): void {
 	const kbCmd = program
@@ -137,6 +309,64 @@ export function registerKbCommand(program: Command): void {
 			);
 
 			store.close();
+		});
+
+	// failsafe kb dataset-stats [--success-only] [--gate] [thresholds...]
+	// Reports corpus health for the classifier dataset (item 27): class balance
+	// across KNOWN_DIAGNOSIS_CATEGORIES, dedupe rate, label confidence, and a
+	// readiness gate the classifier work (item 3) can consume in CI.
+	kbCmd
+		.command("dataset-stats")
+		.description("Report training-data quality metrics and a classifier readiness gate")
+		.option("--success-only", "Only count successful fixes")
+		.option("--gate", "Exit non-zero when the corpus is not classifier-ready")
+		.option("--min-samples <n>", "Minimum labeled samples for readiness")
+		.option("--min-categories <n>", "Minimum distinct categories for readiness")
+		.option("--max-imbalance <n>", "Maximum class-imbalance ratio for readiness")
+		.option("--max-dedupe-rate <n>", "Maximum duplicate-signature rate (0..1) for readiness")
+		.option("--min-labeled-fraction <n>", "Minimum labeled fraction (0..1) for readiness")
+		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
+		.action(async (opts) => {
+			const { store, outOpts } = initCommand(opts);
+
+			const thresholds: Partial<DatasetThresholds> = {};
+			if (opts.minSamples !== undefined)
+				thresholds.min_samples = Number.parseInt(opts.minSamples, 10);
+			if (opts.minCategories !== undefined)
+				thresholds.min_categories = Number.parseInt(opts.minCategories, 10);
+			if (opts.maxImbalance !== undefined)
+				thresholds.max_imbalance_ratio = Number.parseFloat(opts.maxImbalance);
+			if (opts.maxDedupeRate !== undefined)
+				thresholds.max_dedupe_rate = Number.parseFloat(opts.maxDedupeRate);
+			if (opts.minLabeledFraction !== undefined)
+				thresholds.min_labeled_fraction = Number.parseFloat(opts.minLabeledFraction);
+
+			const stats = computeDatasetStats(store, {
+				successOnly: opts.successOnly === true,
+				thresholds,
+			});
+
+			outputResult(stats as unknown as Record<string, unknown>, outOpts, (d) => {
+				const s = d as DatasetStats;
+				const lines = [
+					`[DATASET] ${s.labeled}/${s.total_samples} labeled sample(s), ${s.distinct_categories} categor(ies)`,
+					`  ready: ${s.readiness.ready ? "yes" : "no"}`,
+					`  dedupe_rate: ${s.dedupe_rate.toFixed(2)}  imbalance: ${s.imbalance_ratio === null ? "n/a" : s.imbalance_ratio.toFixed(1)}  avg_confidence: ${s.avg_confidence === null ? "n/a" : s.avg_confidence.toFixed(2)}`,
+					`  resolved_unverified: ${s.resolved_unverified}  low_confidence: ${s.low_confidence}`,
+				];
+				const present = Object.entries(s.category_counts).filter(([, n]) => n > 0);
+				if (present.length > 0) {
+					lines.push("  categories:");
+					for (const [c, n] of present) lines.push(`    ${c}: ${n}`);
+				}
+				for (const reason of s.readiness.reasons) lines.push(`  - ${reason}`);
+				return lines.join("\n");
+			});
+
+			store.close();
+			if (opts.gate === true && !stats.readiness.ready) process.exit(ExitCode.ERROR);
 		});
 
 	// failsafe kb import <file> [--dry-run]
