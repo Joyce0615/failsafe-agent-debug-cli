@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
 import { registerApplyCommand } from "./apply.js";
 import { registerAutofixCommand } from "./autofix.js";
+import { registerCiCommand } from "./ci.js";
 import { registerConfigCommand, registerInitCommand } from "./config.js";
 import { registerDebugCommand } from "./debug.js";
 import { registerDiagnoseCommand } from "./diagnose.js";
@@ -31,6 +32,7 @@ registerInitCommand(program);
 registerConfigCommand(program);
 registerDoctorCommand(program);
 registerHistoryCommand(program);
+registerCiCommand(program);
 
 // Phase 1: Repro
 registerReproCommand(program);

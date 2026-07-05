@@ -1,0 +1,45 @@
+name: "Failsafe Diagnose"
+description: >-
+  Run a command through Failsafe and post the compact root-cause diagnosis as
+  GitHub Actions check annotations. Fails the job when the command fails.
+author: "failsafe"
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  command:
+    description: "The command to run through Failsafe (e.g. 'npm test')."
+    required: true
+  timeout:
+    description: "Per-command timeout in seconds."
+    required: false
+    default: "300"
+  working-directory:
+    description: "Directory to run the command in (the repo checkout root)."
+    required: false
+    default: "."
+  bun-version:
+    description: "Bun version to install for running Failsafe."
+    required: false
+    default: "1.x"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Install Failsafe dependencies
+      shell: bash
+      run: bun install --frozen-lockfile --cwd "${{ github.action_path }}/.."
+
+    - name: Run command through Failsafe
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        bun "${{ github.action_path }}/../src/cli/index.ts" ci "${{ inputs.command }}" \
+          --timeout "${{ inputs.timeout }}" \
+          --relative-to "$PWD"
