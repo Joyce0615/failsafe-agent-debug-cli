@@ -1,3 +1,4 @@
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 export const FailsafeConfigSchema = z.object({
@@ -87,21 +88,23 @@ export const DEFAULT_CONFIG: FailsafeConfig = FailsafeConfigSchema.parse({
  * captured data (e.g. to a shared cache) without losing the config anchor.
  */
 export function resolveConfigPaths(cwd: string, config: FailsafeConfig) {
-	// Fixed config anchor — never moves with storage_dir.
-	const configDir = `${cwd}/.failsafe`;
-	const configFile = `${configDir}/config.json`;
+	// Fixed config anchor — never moves with storage_dir. Use platform-native
+	// joins so local-filesystem paths are correct on Windows as well as POSIX.
+	const configDir = join(cwd, ".failsafe");
+	const configFile = join(configDir, "config.json");
 
-	// Storage location — controlled by storage_dir (absolute or cwd-relative).
-	const storageDir = config.storage_dir.startsWith("/")
+	// Storage location — controlled by storage_dir, which may be absolute
+	// (including a Windows drive path like `C:\cache`) or relative to cwd.
+	const storageDir = isAbsolute(config.storage_dir)
 		? config.storage_dir
-		: `${cwd}/${config.storage_dir}`;
+		: join(cwd, config.storage_dir);
 
 	return {
 		configDir,
 		configFile,
 		storageDir,
-		runsDir: `${storageDir}/runs`,
-		historyDb: `${storageDir}/history.sqlite`,
-		codeIndexDir: `${storageDir}/code-index`,
+		runsDir: join(storageDir, "runs"),
+		historyDb: join(storageDir, "history.sqlite"),
+		codeIndexDir: join(storageDir, "code-index"),
 	};
 }

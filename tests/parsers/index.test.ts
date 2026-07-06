@@ -55,6 +55,21 @@ describe("extractPrimaryLocation", () => {
 		const location = extractPrimaryLocation([]);
 		expect(location).toBeUndefined();
 	});
+
+	test("normalizes Windows-style paths to POSIX in the emitted location", () => {
+		// tsc on Windows emits backslash-separated paths; the primary location an
+		// agent consumes must come back canonicalized to forward slashes.
+		const winOutput = [
+			"src\\auth.ts(42,17): error TS2345: Argument of type 'string | undefined' is not assignable.",
+			"",
+			"Found 1 error in 1 file.",
+			"",
+		].join("\n");
+		const results = detectAndParse(winOutput, "", "tsc --noEmit");
+		const location = extractPrimaryLocation(results);
+		expect(location?.file).toBe("src/auth.ts");
+		expect(location?.line).toBe(42);
+	});
 });
 
 describe("multi-language (mixed) output", () => {

@@ -1,4 +1,5 @@
 import type { SourceLocation } from "../types/common.js";
+import { normalizeLocation } from "../utils/paths.js";
 import { cppParser } from "./cpp.js";
 import { goTestParser } from "./go.js";
 import { javaParser } from "./java.js";
@@ -65,17 +66,19 @@ export function detectAndParse(stdout: string, stderr: string, command: string):
 function locationFromResult(result: ParserResult): SourceLocation | undefined {
 	for (const error of result.errors) {
 		if (error.location) {
-			return error.location;
+			// Normalize emitted locations so agents on any platform get a stable,
+			// comparable file path (Windows separators/drive letters -> POSIX).
+			return normalizeLocation(error.location);
 		}
 		if (error.stack_frames) {
 			const appFrame = error.stack_frames.find((f) => f.is_application);
 			if (appFrame) {
-				return {
+				return normalizeLocation({
 					file: appFrame.file,
 					line: appFrame.line,
 					column: appFrame.column,
 					symbol: appFrame.function,
-				};
+				});
 			}
 		}
 	}
