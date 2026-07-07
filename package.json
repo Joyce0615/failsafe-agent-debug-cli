@@ -3,19 +3,35 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "failsafe": "./src/cli/index.ts",
-    "failsafe-mcp": "./src/mcp/server.ts"
+    "failsafe": "./dist/index.js",
+    "failsafe-mcp": "./dist/server.js"
+  },
+  "files": [
+    "dist",
+    "ci/action.yml",
+    "README.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "bun src/cli/index.ts",
     "mcp": "bun src/mcp/server.ts",
+    "build": "bun scripts/build.ts",
     "test": "bun test tests/",
     "setup:fixtures": "bun scripts/setup-fixtures.ts",
     "bench": "bun scripts/bench.ts --check",
     "test:e2e": "bun scripts/setup-fixtures.ts && bun test tests/e2e/",
     "lint": "bunx biome check src/",
     "format": "bunx biome format --write src/",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bunx tsc --noEmit",
+    "prepublishOnly": "bun run typecheck && bun run lint && bun test tests/ && bun run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
