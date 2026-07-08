@@ -1,5 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Command } from "commander";
+import {
+	type ClassifierEvaluation,
+	evaluateClassifier,
+	loadDatasetSamples,
+} from "../diagnosis/classifier.js";
 import type { FlakyRecord, LearnedRule } from "../rules/types.js";
 import type { FailsafeStore } from "../storage/store.js";
 import { SCHEMA_VERSION, checkSchemaCompatibility } from "../types/common.js";
@@ -367,6 +372,69 @@ export function registerKbCommand(program: Command): void {
 
 			store.close();
 			if (opts.gate === true && !stats.readiness.ready) process.exit(ExitCode.ERROR);
+		});
+
+	// failsafe kb classify-eval [--dataset dataset.jsonl] [--folds 5] [--seed 1]
+	// Evaluation prototype (item 3): compare a tiny offline Naive Bayes classifier
+	// against template/builtin matching via k-fold cross-validation on the
+	// `kb export-dataset` corpus, and report whether the model is worth promoting.
+	kbCmd
+		.command("classify-eval")
+		.description("Evaluate the prototype diagnosis classifier vs template matching")
+		.option("--dataset <file>", "JSONL dataset from 'kb export-dataset'", "dataset.jsonl")
+		.option("--folds <n>", "Cross-validation folds", "5")
+		.option("--seed <n>", "Deterministic shuffle seed", "1")
+		.option("--gate", "Exit non-zero unless the classifier beats the baseline")
+		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.action(async (opts) => {
+			const { store, outOpts } = initCommand(opts);
+			// The corpus comes from a file, not the live store; close it promptly.
+			store.close();
+
+			const datasetFile = opts.dataset as string;
+			let jsonl: string;
+			try {
+				jsonl = readFileSync(datasetFile, "utf-8");
+			} catch (err) {
+				outputResult(
+					{ error: true, message: `Failed to read dataset: ${(err as Error).message}` },
+					outOpts,
+				);
+				process.exit(ExitCode.NO_INPUT);
+			}
+
+			const samples = loadDatasetSamples(jsonl);
+			if (samples.length === 0) {
+				outputResult(
+					{
+						error: true,
+						message: `No labeled samples in ${datasetFile}; run 'failsafe kb export-dataset' after resolving some failures.`,
+					},
+					outOpts,
+				);
+				process.exit(ExitCode.NO_INPUT);
+			}
+
+			const evaluation = evaluateClassifier(samples, {
+				folds: Number.parseInt(opts.folds, 10),
+				seed: Number.parseInt(opts.seed, 10),
+			});
+
+			outputResult(evaluation as unknown as Record<string, unknown>, outOpts, (d) => {
+				const e = d as ClassifierEvaluation;
+				return [
+					`[CLASSIFY-EVAL] ${e.samples} sample(s), ${e.classes} class(es), ${e.folds}-fold`,
+					`  classifier accuracy: ${(e.classifier.accuracy * 100).toFixed(1)}%`,
+					`  baseline accuracy:   ${(e.baseline.accuracy * 100).toFixed(1)}%`,
+					`  improvement: ${(e.improvement * 100).toFixed(1)} pts  ->  ${e.verdict}`,
+					`  ${e.recommendation}`,
+				].join("\n");
+			});
+
+			if (opts.gate === true && evaluation.verdict !== "classifier_wins") {
+				process.exit(ExitCode.ERROR);
+			}
 		});
 
 	// failsafe kb import <file> [--dry-run]
