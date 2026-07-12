@@ -33,6 +33,40 @@ function buildDebugpyLaunchCommand(command: string, port: number): string {
 	return `python3 -m debugpy ${listen} ${rest}`;
 }
 
+/**
+ * Build a Node launch command using the built-in V8 inspector. `--inspect-brk`
+ * pauses on the first line and waits for a DAP/IDE client to attach — the
+ * Node analogue of debugpy's `--listen --wait-for-client`. No extra install is
+ * needed: the inspector ships with Node.
+ */
+function buildNodeInspectLaunchCommand(command: string, port: number): string {
+	const brk = `--inspect-brk=127.0.0.1:${port}`;
+
+	// npx/direct jest → run the local binary single-threaded so breakpoints hit.
+	const jestMatch = command.match(/(?:npx\s+)?jest\s+(.+)/);
+	if (jestMatch) {
+		return `node ${brk} node_modules/.bin/jest --runInBand ${jestMatch[1]}`;
+	}
+	// npx/direct vitest → run the local binary.
+	const vitestMatch = command.match(/(?:npx\s+)?vitest\s+(.+)/);
+	if (vitestMatch) {
+		return `node ${brk} node_modules/.bin/vitest ${vitestMatch[1]}`;
+	}
+	// bun uses its own inspector flag rather than node's.
+	const bunMatch = command.match(/^bun\s+(.+)/);
+	if (bunMatch) {
+		return `bun --inspect-brk=127.0.0.1:${port} ${bunMatch[1]}`;
+	}
+	// node script.js args
+	const nodeMatch = command.match(/^node\s+(.+)/);
+	if (nodeMatch) {
+		return `node ${brk} ${nodeMatch[1]}`;
+	}
+	// Fallback: strip a leading node so we don't double the interpreter.
+	const rest = command.replace(/^node\s+/, "");
+	return `node ${brk} ${rest}`;
+}
+
 export function registerDebugCommand(program: Command): void {
 	program
 		.command("debug <failure-id>")
@@ -125,10 +159,20 @@ export function registerDebugCommand(program: Command): void {
 			// the agent/human a ready-to-run command to start an interactive
 			// debugger that pauses at the failure location.
 			const port = Number.parseInt(opts.port, 10);
-			const launchCommand = buildDebugpyLaunchCommand(command, port);
+			const isNode = capability.runtime === "node";
+			const launchCommand = isNode
+				? buildNodeInspectLaunchCommand(command, port)
+				: buildDebugpyLaunchCommand(command, port);
 
 			// Source context around the breakpoint
 			const slice = await extractSourceSlice(breakpoint, 5);
+
+			const attachInstruction = isNode
+				? `Attach a DAP client / IDE to 127.0.0.1:${port} (e.g. VS Code 'Node: Attach' or chrome://inspect).`
+				: `Attach a DAP client / IDE to 127.0.0.1:${port} (e.g. VS Code 'Python: Remote Attach').`;
+			const setBreakpointInstruction = isNode
+				? `Set a breakpoint at ${breakpoint.file}:${breakpoint.line} in your editor (execution pauses on the first line until you attach).`
+				: `Set a breakpoint at ${breakpoint.file}:${breakpoint.line} in your editor or via 'breakpoint()'.`;
 
 			const output: Record<string, unknown> = {
 				mode: "launch_guidance",
@@ -136,11 +180,7 @@ export function registerDebugCommand(program: Command): void {
 				adapter: capability.adapter.name,
 				breakpoint: { file: breakpoint.file, line: breakpoint.line, symbol: breakpoint.symbol },
 				launch_command: launchCommand,
-				instructions: [
-					`Set a breakpoint at ${breakpoint.file}:${breakpoint.line} in your editor or via 'breakpoint()'.`,
-					`Run: ${launchCommand}`,
-					`Attach a DAP client / IDE to 127.0.0.1:${port} (e.g. VS Code 'Python: Remote Attach').`,
-				],
+				instructions: [setBreakpointInstruction, `Run: ${launchCommand}`, attachInstruction],
 				note: "Failsafe does not maintain interactive debug sessions across CLI invocations. The 'step' and 'inspect' commands are experimental and only operate within a single process.",
 			};
 

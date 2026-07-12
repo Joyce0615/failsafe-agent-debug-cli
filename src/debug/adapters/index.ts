@@ -34,10 +34,6 @@ const SUPPORTED_RUNTIMES = new Set<string>(ADAPTERS.filter((a) => a.ready).map((
 
 /** Install hints for runtimes that are recognized but not yet supported */
 const FUTURE_RUNTIME_HINTS: Record<string, { debugger: string; installHint: string }> = {
-	node: {
-		debugger: "@vscode/js-debug",
-		installHint: "npm install -g @vscode/js-debug",
-	},
 	go: { debugger: "Delve", installHint: "go install github.com/go-delve/delve/cmd/dlv@latest" },
 	rust: {
 		debugger: "LLDB / CodeLLDB",

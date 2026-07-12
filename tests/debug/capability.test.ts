@@ -12,15 +12,13 @@ describe("checkRuntimeCapability", () => {
 		}
 	});
 
-	test("node is recognized but adapter not yet available", () => {
+	test("node is supported via the built-in inspector adapter", () => {
 		const result = checkRuntimeCapability("node", "fail_123");
-		expect(result.supported).toBe(false);
-		if (!result.supported) {
+		expect(result.supported).toBe(true);
+		if (result.supported) {
 			expect(result.runtime).toBe("node");
-			expect(result.reason).toContain("not yet available");
-			expect(result.future_debugger).toBe("@vscode/js-debug");
-			expect(result.install_hint).toContain("js-debug");
-			expect(result.next_best.length).toBeGreaterThan(0);
+			expect(result.adapter.name).toBe("node-inspector");
+			expect(result.adapter.ready).toBe(true);
 		}
 	});
 

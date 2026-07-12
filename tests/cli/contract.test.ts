@@ -207,17 +207,25 @@ describe("CLI contract: debug", () => {
 		}
 	}, 30_000);
 
-	test("node failure returns unsupported_runtime packet (DEBUG_UNAVAILABLE)", async () => {
+	test("node failure emits launch guidance via the built-in inspector", async () => {
 		await run(["run", 'node -e "const x=null; x.y"']);
-		const r = await run(["debug", "last", "--break", "x.js:1"]);
-		expect(r.exitCode).toBe(4); // DEBUG_UNAVAILABLE
+		const r = await run(["debug", "last", "--break", "x.js:1", "--port", "9229"]);
 		const data = r.json as Record<string, unknown>;
-		expect(data.unsupported_runtime).toBe(true);
-		expect(data.runtime).toBe("node");
-		expect(data.future_debugger as string).toContain("js-debug");
-		expect(data.install_hint).toBeDefined();
-		// Fallback commands should be offered.
-		expect(Array.isArray(data.next)).toBe(true);
+		// `node` should be on PATH in the test env, giving launch guidance (0);
+		// if it is somehow missing, a structured adapter_missing packet (4).
+		if (r.exitCode === 0) {
+			expect(data.mode).toBe("launch_guidance");
+			expect(data.runtime).toBe("node");
+			expect(data.adapter).toBe("node-inspector");
+			expect(data.launch_command as string).toContain("--inspect-brk=127.0.0.1:9229");
+			const bp = data.breakpoint as Record<string, unknown>;
+			expect(bp.file).toBe("x.js");
+			expect(bp.line).toBe(1);
+		} else {
+			expect(r.exitCode).toBe(4);
+			expect(data.adapter_missing).toBe(true);
+			expect(data.runtime).toBe("node");
+		}
 	}, 30_000);
 
 	test("step on a nonexistent session returns debug_unavailable", async () => {

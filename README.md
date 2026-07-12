@@ -56,7 +56,7 @@ All commands output JSON by default. Use `--format text` for human-readable outp
 
 ### Debug (experimental)
 
-`failsafe debug <id>` emits **launch guidance** — a ready-to-run `debugpy` command and breakpoint location for an interactive debugger you attach from your editor/IDE. It does not manage a live session. Currently only **Python** (debugpy) has a working adapter; Node.js DAP support is planned (`@vscode/js-debug`).
+`failsafe debug <id>` emits **launch guidance** — a ready-to-run command and breakpoint location for an interactive debugger you attach from your editor/IDE. It does not manage a live session. **Python** uses `debugpy`; **Node.js** uses the built-in V8 inspector (`node --inspect-brk`), which you attach to from VS Code ("Node: Attach") or chrome://inspect. Both pause execution and wait for the client to attach.
 
 | Command | Description |
 |---------|-------------|

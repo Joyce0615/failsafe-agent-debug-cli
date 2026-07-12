@@ -1,31 +1,36 @@
 import type { AdapterInfo } from "./index.js";
 
 /**
- * Node.js debug adapter stub.
+ * Node.js debug adapter backed by the built-in V8 inspector.
  *
- * IMPORTANT: Node.js DAP support requires a dedicated adapter like
- * @vscode/js-debug. Plain `node` does NOT speak the DAP protocol over
- * stdio. This adapter is registered so that `detectRuntime` + capability
- * gating can report Node as "recognized but not yet available" with a
- * clear install hint, rather than silently failing at connection time.
+ * Failsafe's `debug` command uses the *launch-guidance* model: it hands the
+ * agent/human a ready-to-run command that pauses execution and waits for a
+ * DAP/IDE client to attach — it does not persist a live session across CLI
+ * invocations. For Node this needs no extra install: `node --inspect-brk`
+ * ships with Node itself and pauses on the first line until a debugger
+ * attaches (the exact analogue of debugpy's `--listen --wait-for-client`).
+ * The IDE side (VS Code "Node: Attach", or chrome://inspect) provides the
+ * DAP/CDP bridge, just as the Python flow relies on "Python: Remote Attach".
  *
- * isAvailable() returns false until a real DAP adapter is installed.
+ * `isAvailable()` therefore only checks that `node` is on PATH.
  */
 export const nodeInspectorAdapter: AdapterInfo = {
 	name: "node-inspector",
 	runtime: "node",
 	transport: "stdio",
 	command: "node",
-	args: [],
-	ready: false,
-	installHint:
-		"Node.js DAP debugging requires @vscode/js-debug. Install: npm install -g @vscode/js-debug",
+	args: ["--inspect-brk"],
+	ready: true,
+	installHint: "Node.js ships a built-in inspector (node --inspect-brk); ensure 'node' is on PATH",
 
 	async isAvailable(): Promise<boolean> {
-		// Plain `node` is not a DAP adapter. A real implementation needs
-		// @vscode/js-debug or a similar DAP server. Return false until one
-		// is detected.
-		return false;
+		try {
+			const proc = Bun.spawn(["node", "--version"], { stdout: "pipe", stderr: "pipe" });
+			await proc.exited;
+			return proc.exitCode === 0;
+		} catch {
+			return false;
+		}
 	},
 
 	launchArgs(options): Record<string, unknown> {
