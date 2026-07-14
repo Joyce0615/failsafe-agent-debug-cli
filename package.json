@@ -24,6 +24,8 @@
     "dev": "bun src/cli/index.ts",
     "mcp": "bun src/mcp/server.ts",
     "build": "bun scripts/build.ts",
+    "clean": "bun scripts/clean.ts",
+    "package": "bun scripts/clean.ts && bun scripts/package.ts",
     "test": "bun test tests/",
     "setup:fixtures": "bun scripts/setup-fixtures.ts",
     "bench": "bun scripts/bench.ts --check",
