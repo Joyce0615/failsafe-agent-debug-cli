@@ -3,8 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCommand } from "../../src/capture/runner.js";
+import { verifyFailure } from "../../src/core/operations.js";
 import { diagnose } from "../../src/diagnosis/engine.js";
 import { detectAndParse, extractPrimaryLocation } from "../../src/parsers/index.js";
+import { generateRepro } from "../../src/repro/engine.js";
 import { redactSecrets } from "../../src/security/redaction.js";
 import { FailsafeStore } from "../../src/storage/store.js";
 import { SCHEMA_VERSION } from "../../src/types/common.js";
@@ -176,6 +178,51 @@ describeNode("E2E: Node.js/Jest project", () => {
 		expect(location!.file).toContain("auth");
 		expect(location!.line).toBeGreaterThan(0);
 	}, 30_000);
+
+	test("generates and verifies a minimal single-test repro", async () => {
+		const record = await captureFailure(
+			`./node_modules/.bin/jest --config='{}' --testMatch='**/*.fixture-test.js'`,
+			NODE_PROJECT,
+		);
+		expect(record.status).toBe("failed");
+
+		// Repro reduces the 7-test run to the single failing test and re-runs it
+		// (the fixture's jest.config.js lets the selector command find the file).
+		const repro = await generateRepro(record, store, {
+			verify: true,
+			timeout_ms: 30_000,
+			cwd: NODE_PROJECT,
+		});
+
+		expect(repro.failure_id).toBe(record.failure_id);
+		expect(repro.kind).toBe("test_selector");
+		expect(repro.command).toContain("jest");
+		expect(repro.command).toContain("-t ");
+		// The minimal repro reproduces the original TypeError signature.
+		expect(repro.status).toBe("verified");
+		expect(repro.reduction.repro_tests).toBe(1);
+	}, 60_000);
+
+	test("verify re-runs repro + original and reports still-failing (no fix)", async () => {
+		const record = await captureFailure(
+			`./node_modules/.bin/jest --config='{}' --testMatch='**/*.fixture-test.js'`,
+			NODE_PROJECT,
+		);
+		await generateRepro(record, store, { verify: true, timeout_ms: 30_000, cwd: NODE_PROJECT });
+
+		// No fix was applied, so verify must report the failure as unresolved,
+		// having actually re-run both the minimal repro and the original command.
+		const result = await verifyFailure(record.failure_id, store, DEFAULT_CONFIG, {
+			timeoutMs: 30_000,
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.data.status).toBe("failed");
+		const checks = result.data.checks as Array<{ kind: string; status: string }>;
+		expect(checks.some((c) => c.kind === "minimal_repro")).toBe(true);
+		expect(checks.some((c) => c.kind === "original_command")).toBe(true);
+		expect(result.data.resolution_candidate).toBeUndefined();
+	}, 60_000);
 });
 
 describe("E2E: stored failure retrieval", () => {

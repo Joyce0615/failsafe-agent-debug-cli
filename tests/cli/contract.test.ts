@@ -228,6 +228,24 @@ describe("CLI contract: debug", () => {
 		}
 	}, 30_000);
 
+	test("go/rust/java/dotnet debug returns unsupported_runtime packets", async () => {
+		// Runtimes without a wired-up adapter must return a structured
+		// unsupported_runtime packet (DEBUG_UNAVAILABLE) naming the future
+		// debugger + fallbacks. Driven via --runtime so the assertion is
+		// deterministic regardless of which toolchains are installed.
+		await run(["run", 'node -e "process.exit(1)"']);
+		for (const runtime of ["go", "rust", "java", "dotnet"]) {
+			const r = await run(["debug", "last", "--break", "x:1", "--runtime", runtime]);
+			expect(r.exitCode).toBe(4); // DEBUG_UNAVAILABLE
+			const data = r.json as Record<string, unknown>;
+			expect(data.unsupported_runtime).toBe(true);
+			expect(data.runtime).toBe(runtime);
+			expect(data.future_debugger).toBeDefined();
+			expect(data.install_hint).toBeDefined();
+			expect(Array.isArray(data.next)).toBe(true);
+		}
+	}, 60_000);
+
 	test("step on a nonexistent session returns debug_unavailable", async () => {
 		const r = await run(["step", "--session", "dbg_nonexistent", "--over"]);
 		expect(r.exitCode).toBe(4); // DEBUG_UNAVAILABLE
