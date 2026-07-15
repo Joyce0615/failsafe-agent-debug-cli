@@ -34,6 +34,15 @@ const SECRET_PATTERN_ENTRIES: PatternEntry[] = [
 			/-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z]+ )?PRIVATE KEY-----/g,
 	},
 	{
+		// Redact the `user:password@` credential of a DB/broker/URL connection
+		// string, keeping the scheme+host for debuggability (lookbehind matches
+		// only the userinfo). Covers the common schemes an error message tends
+		// to echo back verbatim.
+		name: "Connection String Credentials",
+		pattern:
+			/(?<=(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqps?|https?|ftp):\/\/)[^\s:@/]*:[^\s:@/]+@/gi,
+	},
+	{
 		name: "Generic Password/Secret in Env",
 		pattern: /(?:PASSWORD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)=[^\s]+/g,
 	},
