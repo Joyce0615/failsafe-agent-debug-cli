@@ -60,12 +60,13 @@ afterAll(async () => {
 });
 
 describe("MCP server: tools/list", () => {
-	test("exposes all four failsafe tools", async () => {
+	test("exposes all failsafe tools", async () => {
 		const { tools } = await client.listTools();
 		const names = tools.map((t) => t.name).sort();
 		expect(names).toEqual([
 			"failsafe_analyze",
 			"failsafe_diagnose",
+			"failsafe_explain",
 			"failsafe_repro",
 			"failsafe_verify",
 		]);
@@ -159,6 +160,28 @@ describe("MCP server: failsafe_verify", () => {
 		// Original command still exits 1, so verification fails.
 		expect(json.status).toBe("failed");
 	}, 30_000);
+});
+
+describe("MCP server: failsafe_explain", () => {
+	test("returns a combined-evidence explanation for the last failure", async () => {
+		await callTool("failsafe_analyze", {
+			command: "python3 -c \"raise KeyError('user_id')\"",
+			diagnose: true,
+		});
+		const { isError, json } = await callTool("failsafe_explain", { failure_id: "last" });
+		expect(isError).toBe(false);
+		expect(json.failure_id).toBeDefined();
+		expect(json.summary).toBeDefined();
+		expect(Array.isArray(json.evidence)).toBe(true);
+		expect(json.verify).toBeDefined();
+	}, 30_000);
+
+	test("unknown failure id returns isError (NO_INPUT)", async () => {
+		const { isError, json } = await callTool("failsafe_explain", { failure_id: "fail_missing" });
+		expect(isError).toBe(true);
+		expect(json.error).toBe(true);
+		expect(json.exit_code).toBe(2);
+	});
 });
 
 describe("MCP server: resources", () => {

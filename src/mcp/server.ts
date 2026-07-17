@@ -23,6 +23,7 @@ import { createStore, loadConfig } from "../cli/shared.js";
 import {
 	analyzeCommand,
 	diagnoseFailure,
+	explainFailure,
 	reproFailure,
 	verifyFailure,
 } from "../core/operations.js";
@@ -135,6 +136,23 @@ export function createFailsafeMcpServer(): McpServer {
 						timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
 					}),
 				);
+			} finally {
+				store.close();
+			}
+		},
+	);
+
+	server.tool(
+		"failsafe_explain",
+		"Combine a stored failure's diagnosis and repro evidence into one compact explanation packet (summary, evidence, ranked fix_options, recommended_fix). Same contract as `failsafe explain`.",
+		{
+			failure_id: z.string().describe("Failure id, or 'last' for the most recent failure"),
+		},
+		async ({ failure_id }) => {
+			const config = loadConfig();
+			const store = createStore(config);
+			try {
+				return toToolResponse(explainFailure(failure_id, store));
 			} finally {
 				store.close();
 			}

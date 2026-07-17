@@ -5,11 +5,14 @@ import { join } from "node:path";
 import {
 	analyzeCommand,
 	diagnoseFailure,
+	explainFailure,
 	reproFailure,
 	verifyFailure,
 } from "../../src/core/operations.js";
 import { FailsafeStore } from "../../src/storage/store.js";
 import { DEFAULT_CONFIG } from "../../src/types/config.js";
+
+const CLI = join(import.meta.dir, "../../src/cli/index.ts");
 
 let store: FailsafeStore;
 let tempDir: string;
@@ -143,5 +146,47 @@ describe("verifyFailure", () => {
 			// The original command still exits 1, so verification fails
 			expect(verify.data.status).toBe("failed");
 		}
+	}, 30_000);
+});
+
+describe("explainFailure", () => {
+	test("NO_INPUT for unknown id and empty 'last'", () => {
+		expect(explainFailure("fail_unknown", store).ok).toBe(false);
+		const last = explainFailure("last", store);
+		expect(last.ok).toBe(false);
+		if (!last.ok) expect(last.error.exit_code).toBe(2);
+	});
+
+	test("combined-evidence packet is byte-identical via the CLI and the core function", async () => {
+		// Seed failure + diagnosis + repro so explain has evidence and fix_options.
+		const run = await analyzeCommand("python3 -c \"raise KeyError('user_id')\"", config, store);
+		expect(run.ok).toBe(true);
+		if (!run.ok) return;
+		const id = run.data.failure_id as string;
+		await diagnoseFailure(id, store, config);
+		await reproFailure(id, store, { verify: false });
+
+		const core = explainFailure(id, store);
+		expect(core.ok).toBe(true);
+		if (!core.ok) return;
+
+		// Structural checks on the combined-evidence shape.
+		expect(core.data.summary).toBeDefined();
+		expect(Array.isArray(core.data.evidence)).toBe(true);
+		const fixOptions = core.data.fix_options as Array<{ title: string }>;
+		expect(fixOptions.length).toBeGreaterThan(0);
+		expect(core.data.recommended_fix).toBe(fixOptions[0].title);
+		expect(core.data.verify).toEqual({ command: `failsafe verify ${id}` });
+
+		// The CLI reads the SAME storage (cwd=tempDir, default storage_dir=.failsafe)
+		// and must emit exactly the core packet — proving explain routes through core.
+		const proc = Bun.spawn(["bun", CLI, "explain", id, "--format", "json"], {
+			cwd: tempDir,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const out = await new Response(proc.stdout).text();
+		await proc.exited;
+		expect(JSON.parse(out)).toEqual(core.data);
 	}, 30_000);
 });
