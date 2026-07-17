@@ -9,7 +9,8 @@
   "files": [
     "dist",
     "ci/action.yml",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "exports": {
     "./package.json": "./package.json"

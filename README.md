@@ -12,7 +12,9 @@ failure -> compact diagnosis -> minimal repro -> verify
 bun install
 ```
 
-Requires [Bun](https://bun.sh) v1.0+.
+Requires [Bun](https://bun.sh) v1.0+. For installing Failsafe as a CLI, an MCP
+server, or a Claude Code skill, see [docs/install.md](docs/install.md). Release
+notes live in [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick Start
 
@@ -247,7 +249,7 @@ When a command fails, call Failsafe first:
 Treat Failsafe output as the compact failure context. Only request raw logs when the diagnosis lacks evidence.
 ```
 
-A Claude Code skill is included at `skills/failsafe/` — copy to `~/.claude/skills/failsafe/` or `.claude/skills/failsafe/` for automatic integration.
+A Claude Code skill is included at `skills/failsafe/` — copy to `~/.claude/skills/failsafe/` or `.claude/skills/failsafe/` for automatic integration. See [docs/install.md](docs/install.md#3-as-an-agent-skill) for details.
 
 ## Development
 
