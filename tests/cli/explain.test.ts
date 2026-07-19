@@ -60,6 +60,16 @@ describe("explain packet contract", () => {
 		expect(out.verify).toEqual({ command: `failsafe verify ${out.failure_id}` });
 	}, 30_000);
 
+	test("emits a token_budget with raw_output_bytes, returned_bytes, compression_ratio", async () => {
+		const out = await seedAndExplain("python3 -c \"raise KeyError('budget')\"");
+		const tb = out.token_budget as Record<string, unknown>;
+		expect(tb).toBeDefined();
+		expect(typeof tb.raw_output_bytes).toBe("number");
+		expect(typeof tb.returned_bytes).toBe("number");
+		expect(typeof tb.compression_ratio).toBe("number");
+		expect(tb.returned_bytes as number).toBeGreaterThan(0);
+	}, 30_000);
+
 	test("key_error → null/undefined guard fix options", async () => {
 		const out = await seedAndExplain("python3 -c \"raise KeyError('x')\"");
 		const fixOptions = out.fix_options as Array<{ title: string; risk: string }>;

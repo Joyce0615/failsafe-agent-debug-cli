@@ -485,6 +485,12 @@ export function explainFailure(
 
 	output.verify = { command: `failsafe verify ${fid}` };
 
+	// Attach a compression signal like `run`/`diagnose`: the raw baseline is the
+	// underlying failure's captured output, compacted into this explanation.
+	const rawBytes = failure.token_budget?.raw_output_bytes ?? 0;
+	const returnedBytes = Buffer.byteLength(JSON.stringify(output));
+	output.token_budget = computeTokenBudget(rawBytes, returnedBytes);
+
 	return { ok: true, data: output };
 }
 
