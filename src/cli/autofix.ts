@@ -13,13 +13,12 @@
  */
 import type { Command } from "commander";
 import { runCommand } from "../capture/runner.js";
-import { analyzeCommand, diagnoseFailure } from "../core/operations.js";
+import { analyzeCommand, applyFix, diagnoseFailure } from "../core/operations.js";
 import { loadDeclaredRules } from "../rules/declared.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import type { FailsafeStore } from "../storage/store.js";
 import type { FailsafeConfig } from "../types/config.js";
 import type { FailureRecord } from "../types/failure.js";
-import { applyFix } from "./apply.js";
 import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
 import { initCommand, resolveFailureOrExit } from "./shared.js";

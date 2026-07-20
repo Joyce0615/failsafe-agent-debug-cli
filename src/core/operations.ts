@@ -6,6 +6,9 @@
  * diverge. Errors are returned as structured objects (never thrown) with an
  * `error: true` flag and an `exit_code` hint mirroring the CLI exit codes.
  */
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runCommand } from "../capture/runner.js";
 import { ExitCode } from "../cli/exit-codes.js";
 import { diagnose } from "../diagnosis/engine.js";
@@ -16,6 +19,7 @@ import {
 } from "../parsers/index.js";
 import { generateRepro } from "../repro/engine.js";
 import { computeSignature } from "../repro/signatures.js";
+import { loadDeclaredRules } from "../rules/declared.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { redactSecrets } from "../security/redaction.js";
 import type { FailsafeStore } from "../storage/store.js";
@@ -492,6 +496,192 @@ export function explainFailure(
 	output.token_budget = computeTokenBudget(rawBytes, returnedBytes);
 
 	return { ok: true, data: output };
+}
+
+export type ApplyResult = {
+	exit_code: number;
+	data: Record<string, unknown>;
+};
+
+/** Resolve the declared-rule fix patch for a diagnosed failure, if any. */
+function resolvePatch(
+	failure: FailureRecord,
+	store: FailsafeStore,
+	config: FailsafeConfig,
+): { rule_id: string; diff: string } | null {
+	const diagnosis = store.getDiagnosis(failure.failure_id);
+	// Only declared rules carry an authored `fix_patch`; learned/builtin tiers
+	// supply prose or commands, not a diff.
+	if (!diagnosis || diagnosis.rule_source !== "declared" || !diagnosis.rule_id) return null;
+	const rulesFilePath = `${failure.cwd}/${config.rules?.rules_file ?? ".failsafe/rules.yaml"}`;
+	const rule = loadDeclaredRules(rulesFilePath).find((r) => r.id === diagnosis.rule_id);
+	const diff = rule?.diagnosis.fix_patch;
+	if (!diff) return null;
+	return { rule_id: rule.id, diff };
+}
+
+/** Parse `git apply --numstat` output into the list of touched file paths. */
+function filesFromNumstat(numstat: string): string[] {
+	const files: string[] = [];
+	for (const line of numstat.split("\n")) {
+		const parts = line.split("\t");
+		if (parts.length >= 3 && parts[2]) files.push(parts[2]);
+	}
+	return files;
+}
+
+/**
+ * Validate and (optionally) apply the declared fix patch for a resolved
+ * failure. Pure of process.exit/console so it is shared by the CLI wrapper and
+ * the `failsafe_apply` MCP tool. Always argv-first (no shell interpolation), so
+ * a malicious `fix_patch` can never inject a command.
+ */
+export async function applyFix(
+	failure: FailureRecord,
+	store: FailsafeStore,
+	config: FailsafeConfig,
+	opts: { confirm?: boolean } = {},
+): Promise<ApplyResult> {
+	const failureId = failure.failure_id;
+
+	if (!store.getDiagnosis(failureId)) {
+		return {
+			exit_code: ExitCode.NO_INPUT,
+			data: {
+				error: true,
+				failure_id: failureId,
+				status: "no_diagnosis",
+				message: `No diagnosis found. Run \`failsafe diagnose ${failureId}\` first.`,
+				next: [{ command: `failsafe diagnose ${failureId}`, reason: "Produce a diagnosis" }],
+			},
+		};
+	}
+
+	const patch = resolvePatch(failure, store, config);
+	if (!patch) {
+		return {
+			exit_code: ExitCode.DEBUG_UNAVAILABLE,
+			data: {
+				failure_id: failureId,
+				status: "no_patch",
+				message: "No declared rule supplies a fix_patch for this failure.",
+			},
+		};
+	}
+
+	const dir = mkdtempSync(join(tmpdir(), "failsafe-apply-"));
+	const patchFile = join(dir, "fix.patch");
+	writeFileSync(patchFile, patch.diff.endsWith("\n") ? patch.diff : `${patch.diff}\n`);
+
+	try {
+		// Validate first — `git apply --check` neither stages nor writes anything.
+		const check = await runCommand("git apply --check", {
+			cwd: failure.cwd,
+			timeout_ms: 30_000,
+			argv: ["git", "apply", "--check", patchFile],
+		});
+		if (check.exit_code !== 0) {
+			return {
+				exit_code: ExitCode.ERROR,
+				data: {
+					failure_id: failureId,
+					rule_id: patch.rule_id,
+					status: "invalid_patch",
+					message: "Patch does not apply cleanly to the working tree.",
+					detail: check.stderr.trim() || check.stdout.trim(),
+				},
+			};
+		}
+
+		const numstat = await runCommand("git apply --numstat", {
+			cwd: failure.cwd,
+			timeout_ms: 30_000,
+			argv: ["git", "apply", "--numstat", patchFile],
+		});
+		const files = filesFromNumstat(numstat.stdout);
+
+		if (!opts.confirm) {
+			return {
+				exit_code: ExitCode.OK,
+				data: {
+					failure_id: failureId,
+					rule_id: patch.rule_id,
+					status: "dry_run",
+					files,
+					message: "Patch applies cleanly. Re-run with --confirm to apply it.",
+					next: [
+						{
+							command: `failsafe apply ${failureId} --confirm`,
+							reason: "Apply the validated patch",
+						},
+					],
+				},
+			};
+		}
+
+		const applied = await runCommand("git apply", {
+			cwd: failure.cwd,
+			timeout_ms: 30_000,
+			argv: ["git", "apply", patchFile],
+		});
+		if (applied.exit_code !== 0) {
+			return {
+				exit_code: ExitCode.ERROR,
+				data: {
+					failure_id: failureId,
+					rule_id: patch.rule_id,
+					status: "apply_failed",
+					message: "Patch validated but failed to apply.",
+					detail: applied.stderr.trim() || applied.stdout.trim(),
+				},
+			};
+		}
+
+		return {
+			exit_code: ExitCode.OK,
+			data: {
+				failure_id: failureId,
+				rule_id: patch.rule_id,
+				status: "applied",
+				files,
+				next: [
+					{
+						command: `failsafe verify ${failureId}`,
+						reason: "Confirm the fix resolves the failure",
+					},
+				],
+			},
+		};
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Resolve a failure by id-or-"last" and apply its declared fix patch. Shared
+ * entry for the `failsafe_apply` MCP tool and the CLI so patch application obeys
+ * the same contract everywhere.
+ */
+export async function applyFixById(
+	rawId: string,
+	store: FailsafeStore,
+	config: FailsafeConfig,
+	opts: { confirm?: boolean } = {},
+): Promise<ApplyResult> {
+	const fid = resolveId(rawId, store);
+	const failure = fid ? store.getFailure(fid) : null;
+	if (!failure) {
+		return {
+			exit_code: ExitCode.NO_INPUT,
+			data: {
+				error: true,
+				failure_id: rawId,
+				status: "not_found",
+				message: rawId === "last" ? "No failure found in history" : `Failure not found: ${rawId}`,
+			},
+		};
+	}
+	return applyFix(failure, store, config, opts);
 }
 
 function resolveId(rawId: string, store: FailsafeStore): string | null {

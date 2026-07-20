@@ -65,6 +65,7 @@ describe("MCP server: tools/list", () => {
 		const names = tools.map((t) => t.name).sort();
 		expect(names).toEqual([
 			"failsafe_analyze",
+			"failsafe_apply",
 			"failsafe_diagnose",
 			"failsafe_explain",
 			"failsafe_repro",
@@ -182,6 +183,26 @@ describe("MCP server: failsafe_explain", () => {
 		expect(json.error).toBe(true);
 		expect(json.exit_code).toBe(2);
 	});
+});
+
+describe("MCP server: failsafe_apply", () => {
+	test("unknown failure id returns isError (NO_INPUT)", async () => {
+		const { isError, json } = await callTool("failsafe_apply", { failure_id: "fail_missing" });
+		expect(isError).toBe(true);
+		expect(json.status).toBe("not_found");
+	});
+
+	test("a diagnosed failure with no declared fix_patch returns no_patch (guarded)", async () => {
+		// Builtin diagnosis carries no authored fix_patch, so apply is a no-op —
+		// and defaults to a dry run (confirm omitted), never touching the tree.
+		await callTool("failsafe_analyze", {
+			command: "python3 -c \"raise KeyError('x')\"",
+			diagnose: true,
+		});
+		const { isError, json } = await callTool("failsafe_apply", { failure_id: "last" });
+		expect(isError).toBe(true);
+		expect(json.status).toBe("no_patch");
+	}, 30_000);
 });
 
 describe("MCP server: resources", () => {

@@ -19,9 +19,11 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { ExitCode } from "../cli/exit-codes.js";
 import { createStore, loadConfig } from "../cli/shared.js";
 import {
 	analyzeCommand,
+	applyFixById,
 	diagnoseFailure,
 	explainFailure,
 	reproFailure,
@@ -153,6 +155,31 @@ export function createFailsafeMcpServer(): McpServer {
 			const store = createStore(config);
 			try {
 				return toToolResponse(explainFailure(failure_id, store));
+			} finally {
+				store.close();
+			}
+		},
+	);
+
+	server.tool(
+		"failsafe_apply",
+		"Apply a declared rule's suggested fix patch for a stored failure via `git apply` (argv-first, no shell). Validate-only DRY RUN by default; pass confirm=true to write. Same contract as `failsafe apply`.",
+		{
+			failure_id: z.string().describe("Failure id, or 'last' for the most recent failure"),
+			confirm: z
+				.boolean()
+				.optional()
+				.describe("Apply the patch to the working tree (default: validate-only dry run)"),
+		},
+		async ({ failure_id, confirm }) => {
+			const config = loadConfig();
+			const store = createStore(config);
+			try {
+				const result = await applyFixById(failure_id, store, config, { confirm });
+				return {
+					content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+					isError: result.exit_code !== ExitCode.OK,
+				};
 			} finally {
 				store.close();
 			}

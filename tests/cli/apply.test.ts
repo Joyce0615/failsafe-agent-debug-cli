@@ -10,8 +10,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyFix } from "../../src/cli/apply.js";
 import { ExitCode } from "../../src/cli/exit-codes.js";
+import { applyFix } from "../../src/core/operations.js";
 import type { RuleSource } from "../../src/rules/types.js";
 import { FailsafeStore } from "../../src/storage/store.js";
 import { SCHEMA_VERSION } from "../../src/types/common.js";
@@ -213,4 +213,111 @@ describe("applyFix", () => {
 		expect(result.data.status).toBe("invalid_patch");
 		expect(readFileSync(join(repoDir, "greeting.txt"), "utf-8")).toBe("hello\n");
 	});
+});
+
+/**
+ * CLI ↔ core parity (Item 19): the `failsafe apply` CLI must emit exactly the
+ * packet `applyFix`/`applyFixById` produce. Each scenario runs against the SAME
+ * repo/store: dry_run and invalid_patch don't write, so the CLI JSON can be
+ * compared to a fresh core call; for --confirm we compare on separate identical
+ * trees since the write is one-shot.
+ */
+const CLI = join(import.meta.dir, "../../src/cli/index.ts");
+
+async function cliApply(
+	args: string[],
+): Promise<{ exitCode: number; json: Record<string, unknown> }> {
+	const proc = Bun.spawn(["bun", CLI, "apply", "fail_apply", ...args, "--format", "json"], {
+		cwd: repoDir,
+		stdout: "pipe",
+		stderr: "pipe",
+		env: process.env,
+	});
+	const stdout = await new Response(proc.stdout).text();
+	const exitCode = await proc.exited;
+	return { exitCode, json: JSON.parse(stdout) as Record<string, unknown> };
+}
+
+describe("apply CLI ↔ core parity", () => {
+	test("dry_run packet is byte-identical via CLI and core", async () => {
+		writeRules(GREETING_PATCH);
+		saveDiagnosis();
+		const failure = store.getFailure("fail_apply") as FailureRecord;
+
+		const core = await applyFix(failure, store, config, { confirm: false });
+		const cli = await cliApply([]); // dry run does not write
+		expect(cli.exitCode).toBe(ExitCode.OK);
+		expect(cli.json).toEqual(core.data);
+		expect(readFileSync(join(repoDir, "greeting.txt"), "utf-8")).toBe("hello\n");
+	}, 30_000);
+
+	test("invalid_patch packet is byte-identical via CLI and core", async () => {
+		writeRules(STALE_PATCH);
+		saveDiagnosis();
+		const failure = store.getFailure("fail_apply") as FailureRecord;
+
+		const core = await applyFix(failure, store, config, { confirm: true });
+		const cli = await cliApply(["--confirm"]);
+		expect(cli.exitCode).toBe(ExitCode.ERROR);
+		expect(cli.json).toEqual(core.data);
+	}, 30_000);
+
+	test("--confirm applied packet matches core (separate identical trees)", async () => {
+		writeRules(GREETING_PATCH);
+		saveDiagnosis();
+
+		// CLI applies to the shared repo.
+		const cli = await cliApply(["--confirm"]);
+		expect(cli.exitCode).toBe(ExitCode.OK);
+		expect(cli.json.status).toBe("applied");
+		expect(readFileSync(join(repoDir, "greeting.txt"), "utf-8")).toBe("goodbye\n");
+
+		// Core applies to a fresh, identical tree and must produce the same packet.
+		const otherRepo = mkdtempSync(join(tmpdir(), "failsafe-apply-b-"));
+		try {
+			const otherConfig = { ...DEFAULT_CONFIG, storage_dir: join(otherRepo, ".failsafe") };
+			const otherStore = new FailsafeStore(otherConfig, otherRepo);
+			try {
+				const g = (args: string[]) => {
+					const p = Bun.spawnSync(["git", ...args], { cwd: otherRepo });
+					if (p.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
+				};
+				g(["init", "-q"]);
+				g(["config", "user.email", "t@t.test"]);
+				g(["config", "user.name", "Test"]);
+				writeFileSync(join(otherRepo, "greeting.txt"), "hello\n");
+				g(["add", "greeting.txt"]);
+				g(["commit", "-q", "-m", "init"]);
+				writeFileSync(
+					join(otherRepo, ".failsafe", "rules.yaml"),
+					readFileSync(join(repoDir, ".failsafe", "rules.yaml"), "utf-8"),
+				);
+				const otherFailure = { ...makeFailure(), workspace: otherRepo, cwd: otherRepo };
+				otherStore.saveRun(otherFailure, "", "", "");
+				const diag: FailureDiagnosis = {
+					schema_version: SCHEMA_VERSION,
+					diagnosis_id: "diag_apply",
+					failure_id: "fail_apply",
+					failure_type: "test_failure",
+					severity: "error",
+					summary: "KeyError",
+					root_cause: { category: "key_error", explanation: "missing key", confidence: 0.9 },
+					evidence: [],
+					uncertainty: [],
+					minimal_context: [],
+					suggested_next_actions: [],
+					rule_source: "declared",
+					rule_id: "fix_greeting",
+				};
+				otherStore.saveDiagnosis(diag);
+				const coreFailure = otherStore.getFailure("fail_apply") as FailureRecord;
+				const core = await applyFix(coreFailure, otherStore, otherConfig, { confirm: true });
+				expect(cli.json).toEqual(core.data);
+			} finally {
+				otherStore.close();
+			}
+		} finally {
+			rmSync(otherRepo, { recursive: true, force: true });
+		}
+	}, 30_000);
 });
