@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { DeclaredRule } from "../rules/types.js";
+import type { DeclaredRule, LearnedRule } from "../rules/types.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 
 /**
@@ -14,11 +14,38 @@ export function declaredRulesFingerprint(rules: DeclaredRule[]): string {
 }
 
 /**
- * Cache key for a diagnosis: schema version + declared-rule fingerprint +
- * signature hash. Folding in the schema version and rule fingerprint means a
- * schema bump or a rules edit transparently invalidates previously cached
- * packets without an explicit purge.
+ * Fingerprint of the learned-rule state for a signature. Folds in exactly the
+ * mutable fields that decide whether the learned tier wins and with what output
+ * — `lifecycle` (promotion state), `occurrence_count` (drives sample-size
+ * confidence calibration), `success_count`, and the calibrated `confidence` —
+ * plus the rule id. When a learned rule is promoted (lifecycle → active),
+ * accrues occurrences, or is boosted by a successful fix, this fingerprint
+ * changes, so a prior cached diagnosis for the same signature is invalidated
+ * and the now-stronger learned diagnosis is recomputed instead of masked.
  */
-export function diagnosisCacheKey(signatureHash: string, declaredRules: DeclaredRule[]): string {
-	return `${SCHEMA_VERSION}|${declaredRulesFingerprint(declaredRules)}|${signatureHash}`;
+export function learnedRuleFingerprint(rule: LearnedRule | null | undefined): string {
+	if (!rule) return "none";
+	const material = [
+		rule.rule_id,
+		rule.lifecycle,
+		rule.occurrence_count,
+		rule.success_count,
+		rule.confidence,
+	].join("|");
+	return createHash("sha256").update(material).digest("hex").slice(0, 12);
+}
+
+/**
+ * Cache key for a diagnosis: schema version + declared-rule fingerprint +
+ * learned-rule fingerprint + signature hash. Folding in the schema version,
+ * declared-rule fingerprint, and learned-rule state means a schema bump, a
+ * rules edit, or a learned-rule promotion/boost transparently invalidates
+ * previously cached packets without an explicit purge.
+ */
+export function diagnosisCacheKey(
+	signatureHash: string,
+	declaredRules: DeclaredRule[],
+	learnedRule?: LearnedRule | null,
+): string {
+	return `${SCHEMA_VERSION}|${declaredRulesFingerprint(declaredRules)}|${learnedRuleFingerprint(learnedRule)}|${signatureHash}`;
 }

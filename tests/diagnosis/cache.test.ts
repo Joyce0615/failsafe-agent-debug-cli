@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { declaredRulesFingerprint, diagnosisCacheKey } from "../../src/diagnosis/cache.js";
+import {
+	declaredRulesFingerprint,
+	diagnosisCacheKey,
+	learnedRuleFingerprint,
+} from "../../src/diagnosis/cache.js";
 import { diagnose } from "../../src/diagnosis/engine.js";
 import type { DeclaredRule, LearnedRule } from "../../src/rules/types.js";
 import { SCHEMA_VERSION } from "../../src/types/common.js";
@@ -15,6 +19,24 @@ function rule(id: string): DeclaredRule {
 		diagnosis: { category: "key_error", explanation: `Rule ${id}` },
 		confidence: 0.9,
 	} as DeclaredRule;
+}
+
+function makeLearnedRule(overrides: Partial<LearnedRule> = {}): LearnedRule {
+	return {
+		rule_id: "learn_keyerror",
+		signature_hash: "sighash",
+		category: "key_error",
+		explanation: "Learned: missing dict key",
+		fix_summary: "Guard the key access",
+		occurrence_count: 1,
+		success_count: 0,
+		distinct_files: 1,
+		confidence: 0.9,
+		lifecycle: "active",
+		first_seen_at: "2026-01-01T00:00:00.000Z",
+		last_seen_at: "2026-01-01T00:00:00.000Z",
+		...overrides,
+	};
 }
 
 describe("diagnosisCacheKey", () => {
@@ -40,6 +62,43 @@ describe("diagnosisCacheKey", () => {
 
 	test("empty rule set has a stable 'none' fingerprint", () => {
 		expect(declaredRulesFingerprint([])).toBe("none");
+	});
+
+	test("a null learned rule keeps the key identical to the 2-arg form", () => {
+		expect(learnedRuleFingerprint(null)).toBe("none");
+		expect(diagnosisCacheKey("sighash", [], null)).toBe(diagnosisCacheKey("sighash", []));
+	});
+
+	test("changes when the learned-rule state changes (promotion invalidation)", () => {
+		const noLearned = diagnosisCacheKey("sighash", []);
+		const stale = diagnosisCacheKey(
+			"sighash",
+			[],
+			makeLearnedRule({ lifecycle: "stale", confidence: 0.2, occurrence_count: 1 }),
+		);
+		const promoted = diagnosisCacheKey(
+			"sighash",
+			[],
+			makeLearnedRule({
+				lifecycle: "active",
+				confidence: 0.95,
+				occurrence_count: 10,
+				success_count: 8,
+			}),
+		);
+		// Appearance of a learned rule, and every promotion-relevant transition,
+		// yields a distinct key.
+		expect(stale).not.toBe(noLearned);
+		expect(promoted).not.toBe(stale);
+		expect(promoted).not.toBe(noLearned);
+	});
+
+	test("occurrence/success/confidence each move the learned fingerprint", () => {
+		const base = learnedRuleFingerprint(makeLearnedRule());
+		expect(learnedRuleFingerprint(makeLearnedRule({ occurrence_count: 5 }))).not.toBe(base);
+		expect(learnedRuleFingerprint(makeLearnedRule({ success_count: 3 }))).not.toBe(base);
+		expect(learnedRuleFingerprint(makeLearnedRule({ confidence: 0.99 }))).not.toBe(base);
+		expect(learnedRuleFingerprint(makeLearnedRule({ lifecycle: "promoted" }))).not.toBe(base);
 	});
 });
 
@@ -152,5 +211,60 @@ describe("diagnose cache integration", () => {
 		bare.saveCachedDiagnosis = undefined;
 		const diag = await diagnose(makeFailure(), bare);
 		expect(diag.root_cause).toBeDefined();
+	});
+
+	test("promoting a learned rule invalidates the cache and recomputes a stronger diagnosis", async () => {
+		// A mutable learned rule the store returns for the signature; it starts
+		// absent so the builtin tier wins and is cached.
+		let learned: LearnedRule | null = null;
+		const cache = new Map<string, FailureDiagnosis>();
+		let computeCalls = 0;
+		const store: DiagnoseStore = {
+			findSimilarFailures: () => [],
+			getRawOutput: () => {
+				computeCalls += 1;
+				return "";
+			},
+			getLearnedRuleByHash: () => learned,
+			saveLearnedRule: () => {},
+			updateLearnedRule: () => {},
+			hasRecordedLearning: () => true,
+			markLearningRecorded: () => {},
+			getLatestSuccessfulFix: () => null,
+			countUnresolvedAfterDate: () => 0,
+			getFlakySignature: () => null,
+			upsertFlakySignature: () => {},
+			listFlakySignatures: () => [],
+			getCachedDiagnosis: (k) => cache.get(k) ?? null,
+			saveCachedDiagnosis: (k, d) => {
+				cache.set(k, d);
+			},
+		};
+
+		// First diagnosis: no learned rule → builtin key_error template wins, cached.
+		const first = await diagnose(makeFailure(), store);
+		expect(first.rule_source).toBe("builtin");
+		const computeAfterFirst = computeCalls;
+		expect(computeAfterFirst).toBeGreaterThan(0);
+
+		// A re-diagnosis with no state change is served from cache (no recompute).
+		await diagnose(makeFailure(), store);
+		expect(computeCalls).toBe(computeAfterFirst);
+
+		// Promote a learned rule for the same signature (active, well-corroborated).
+		learned = makeLearnedRule({
+			lifecycle: "active",
+			confidence: 0.95,
+			occurrence_count: 10,
+			success_count: 8,
+		});
+
+		// The learned fingerprint changed, so the stale cached (builtin) packet is
+		// NOT served: the engine recomputes and the stronger learned rule wins.
+		const promoted = await diagnose(makeFailure(), store);
+		expect(computeCalls).toBeGreaterThan(computeAfterFirst);
+		expect(promoted.rule_source).toBe("learned");
+		expect(promoted.rule_id).toBe("learn_keyerror");
+		expect(promoted.root_cause?.confidence).not.toBe(first.root_cause?.confidence);
 	});
 });

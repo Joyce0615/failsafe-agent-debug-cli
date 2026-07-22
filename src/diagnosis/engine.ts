@@ -64,18 +64,24 @@ export async function diagnose(
 	// Step 2: Primary location is already on the record
 	const primaryLocation = failure.primary_location;
 
-	// Compute the signature + cache key up front so an identical, non-flaky
-	// signature can short-circuit the expensive context/git-diff/rule steps.
+	// Compute the signature up front so an identical, non-flaky signature can
+	// short-circuit the expensive context/git-diff/rule steps.
 	const signatureHash = computeSignatureHash(allErrors, primaryLocation);
 	const rulesFilePath = `${failure.cwd}/${config?.rules?.rules_file ?? ".failsafe/rules.yaml"}`;
 	const declaredRules = loadDeclaredRules(rulesFilePath);
-	const cacheKey = diagnosisCacheKey(signatureHash, declaredRules);
 
 	// Record for learning first (idempotent via the learning ledger) so a cache
 	// hit below does not stop occurrence counts from growing.
 	if (config?.rules?.auto_learn !== false) {
 		recordFailureForLearning(store, signatureHash, failure.failure_id, allErrors, primaryLocation);
 	}
+
+	// Build the cache key AFTER learning is recorded so it reflects the learned
+	// state `evaluateRules` will use. Folding the learned-rule fingerprint means a
+	// promotion/boost for this signature invalidates a stale cached packet rather
+	// than masking the now-stronger learned diagnosis.
+	const learnedRule = store.getLearnedRuleByHash(signatureHash);
+	const cacheKey = diagnosisCacheKey(signatureHash, declaredRules, learnedRule);
 
 	// A signature that recurs after a prior fix is non-deterministic; such
 	// failures are never served from (or written to) the cache so their packet
