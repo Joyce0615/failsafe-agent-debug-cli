@@ -1,6 +1,7 @@
 import type { SourceLocation } from "../types/common.js";
 import { normalizeLocation } from "../utils/paths.js";
 import { cppParser } from "./cpp.js";
+import { collapseFramesInResults } from "./frames.js";
 import { goTestParser } from "./go.js";
 import { javaParser } from "./java.js";
 import { biomeParser, eslintParser } from "./linter.js";
@@ -55,7 +56,11 @@ export function detectAndParse(stdout: string, stderr: string, command: string):
 		} catch {}
 	}
 
-	return results;
+	// Fold dependency/internal stack-frame runs before anything downstream reads
+	// them, so long node_modules/traceback chains don't inflate stored evidence
+	// or raw_output_bytes. Application frames (and thus location extraction) are
+	// preserved (item 25).
+	return collapseFramesInResults(results);
 }
 
 /**

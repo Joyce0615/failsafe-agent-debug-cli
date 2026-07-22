@@ -28,9 +28,12 @@ export function computeSignatureHash(
 		parts.error_type = primary.error_type.toLowerCase();
 	}
 
-	// Top frame file (relative path, no line number)
-	const topFrame =
-		primary.stack_frames && primary.stack_frames.length > 0 ? primary.stack_frames[0] : undefined;
+	// Top frame file (relative path, no line number). Prefer the first
+	// application frame (consistent with computeSignature and stable across the
+	// item-25 frame collapse, which may replace a leading dependency frame with a
+	// fold marker); fall back to the literal top frame only when no app frame
+	// exists.
+	const topFrame = primary.stack_frames?.find((f) => f.is_application) ?? primary.stack_frames?.[0];
 
 	if (topFrame) {
 		parts.top_frame_file = topFrame.file;

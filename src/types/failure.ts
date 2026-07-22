@@ -13,6 +13,13 @@ export const StackFrameSchema = z.object({
 	column: z.number().int().optional(),
 	function: z.string().optional(),
 	is_application: z.boolean(),
+	/**
+	 * When set, this is a fold marker standing in for `collapsed` contiguous
+	 * non-application (dependency/internal) frames, not a real frame. Emitted by
+	 * `collapseFrames` so long node_modules/traceback chains don't inflate the
+	 * evidence list. Always `is_application:false`.
+	 */
+	collapsed: z.number().int().optional(),
 });
 export type StackFrame = z.infer<typeof StackFrameSchema>;
 
