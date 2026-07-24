@@ -362,14 +362,15 @@ export class FailsafeSqlite {
 	insertLearnedRule(rule: LearnedRule): void {
 		this.db.run(
 			`INSERT OR REPLACE INTO learned_rules (
-				rule_id, signature_hash, error_type, error_pattern, file_pattern,
+				rule_id, signature_hash, normalized_hash, error_type, error_pattern, file_pattern,
 				category, explanation, fix_summary, fix_commands,
 				occurrence_count, success_count, distinct_files, confidence,
 				lifecycle, first_seen_at, last_seen_at, last_success_at, promoted_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				rule.rule_id,
 				rule.signature_hash,
+				rule.normalized_hash ?? null,
 				rule.error_type ?? null,
 				rule.error_pattern ?? null,
 				rule.file_pattern ?? null,
@@ -394,6 +395,17 @@ export class FailsafeSqlite {
 		const row = this.db
 			.query("SELECT * FROM learned_rules WHERE signature_hash = ?")
 			.get(hash) as LearnedRuleRow | null;
+		if (!row) return null;
+		return this.rowToLearnedRule(row);
+	}
+
+	/** Fuzzy-grouping lookup: the most-seen rule sharing a normalized hash. */
+	getLearnedRuleByNormalizedHash(normalizedHash: string): LearnedRule | null {
+		const row = this.db
+			.query(
+				"SELECT * FROM learned_rules WHERE normalized_hash = ? ORDER BY occurrence_count DESC LIMIT 1",
+			)
+			.get(normalizedHash) as LearnedRuleRow | null;
 		if (!row) return null;
 		return this.rowToLearnedRule(row);
 	}
@@ -784,6 +796,7 @@ export class FailsafeSqlite {
 		return {
 			rule_id: row.rule_id,
 			signature_hash: row.signature_hash,
+			normalized_hash: row.normalized_hash ?? undefined,
 			error_type: row.error_type ?? undefined,
 			error_pattern: row.error_pattern ?? undefined,
 			file_pattern: row.file_pattern ?? undefined,
@@ -945,6 +958,7 @@ interface DebugSessionRow {
 interface LearnedRuleRow {
 	rule_id: string;
 	signature_hash: string;
+	normalized_hash: string | null;
 	error_type: string | null;
 	error_pattern: string | null;
 	file_pattern: string | null;

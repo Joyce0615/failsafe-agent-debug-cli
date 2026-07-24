@@ -75,9 +75,86 @@ export function computeSignatureHash(
 	return digest.substring(0, 16);
 }
 
+/**
+ * Drain-style token normalization: replace the variable literals a log line
+ * carries (UUIDs, hex, quoted strings, numbers) with stable placeholders so two
+ * lines differing only in those literals map to the same template.
+ */
+export function normalizeToken(value: string): string {
+	return value
+		.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<UUID>")
+		.replace(/\b0x[0-9a-f]+\b/gi, "<HEX>")
+		.replace(/\b[0-9a-f]{16,}\b/gi, "<HEX>")
+		.replace(/'[^']*'/g, "'<STR>'")
+		.replace(/"[^"]*"/g, '"<STR>"')
+		.replace(/\d+(?:\.\d+)?/g, "<NUM>");
+}
+
+/** Normalize a message into a template (token-normalized, whitespace-collapsed). */
+export function normalizeMessage(message: string): string {
+	return normalizeToken(message).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Fuzzy (normalized) signature hash for grouping near-duplicate failures.
+ *
+ * Same structural components as {@link computeSignatureHash}, but the
+ * file/function/test-name are token-normalized and a normalized `message`
+ * template is folded in, so failures differing only by an embedded id, number,
+ * quoted key, or hex token share this hash. Categorical codes (error_type,
+ * lint_rule/TS code) are kept exact so genuinely different error classes never
+ * collapse together. This is a *fallback* grouping key — the exact signature
+ * hash remains the primary key.
+ */
+export function computeNormalizedSignatureHash(
+	errors: ParsedError[],
+	primaryLocation?: SourceLocation,
+): string {
+	const primary = errors[0];
+	if (!primary) {
+		return createHash("sha256").update("empty").digest("hex").substring(0, 16);
+	}
+
+	const parts: Record<string, string> = {};
+	if (primary.error_type) parts.error_type = primary.error_type.toLowerCase();
+
+	const topFrame = primary.stack_frames?.find((f) => f.is_application) ?? primary.stack_frames?.[0];
+	if (topFrame) {
+		parts.top_frame_file = normalizeToken(topFrame.file);
+		if (topFrame.function) parts.top_frame_function = normalizeToken(topFrame.function);
+	} else if (primaryLocation) {
+		parts.top_frame_file = normalizeToken(primaryLocation.file);
+		if (primaryLocation.symbol) parts.top_frame_function = normalizeToken(primaryLocation.symbol);
+	}
+
+	if (primary.test_name) parts.test_name = normalizeToken(primary.test_name);
+	if (
+		primary.error_type &&
+		(primary.error_type.includes("/") ||
+			primary.error_type.startsWith("@") ||
+			/^TS\d+$/.test(primary.error_type))
+	) {
+		parts.lint_rule = primary.error_type;
+	}
+	if (primary.message) parts.message_template = normalizeMessage(primary.message);
+
+	const canonical: Record<string, string> = {};
+	for (const key of Object.keys(parts).sort()) canonical[key] = parts[key];
+	// Namespace-prefix so a normalized hash can never collide with an exact one.
+	const digest = createHash("sha256")
+		.update(`norm|${JSON.stringify(canonical)}`)
+		.digest("hex");
+	return digest.substring(0, 16);
+}
+
 // Store interface for learned rule operations
 export type LearnedRuleStore = {
 	getLearnedRuleByHash(hash: string): LearnedRule | null;
+	/**
+	 * Optional fuzzy-grouping lookup by normalized signature hash. When present,
+	 * `recordFailureForLearning` coalesces literal-only variants into one rule.
+	 */
+	getLearnedRuleByNormalizedHash?(normalizedHash: string): LearnedRule | null;
 	saveLearnedRule(rule: LearnedRule): void;
 	updateLearnedRule(ruleId: string, updates: Partial<LearnedRule>): void;
 	hasRecordedLearning(failureId: string): boolean;
@@ -105,7 +182,14 @@ export function recordFailureForLearning(
 		return false;
 	}
 
-	const existing = store.getLearnedRuleByHash(signatureHash);
+	// Primary grouping is the exact signature hash; fall back to the Drain-style
+	// normalized hash so failures differing only by an embedded id/number/literal
+	// aggregate into one rule (raising occurrence_count / earlier promotion).
+	const normalizedHash = computeNormalizedSignatureHash(errors, primaryLocation);
+	const existing =
+		store.getLearnedRuleByHash(signatureHash) ??
+		store.getLearnedRuleByNormalizedHash?.(normalizedHash) ??
+		null;
 	const now = new Date().toISOString();
 
 	if (existing) {
@@ -135,6 +219,7 @@ export function recordFailureForLearning(
 		const newRule: LearnedRule = {
 			rule_id: learnedRuleId(),
 			signature_hash: signatureHash,
+			normalized_hash: normalizedHash,
 			error_type: primary?.error_type,
 			error_pattern: primary?.message.substring(0, 200),
 			file_pattern: primaryLocation?.file ?? primary?.location?.file ?? primary?.test_file,

@@ -66,6 +66,13 @@ export type RulesFile = z.infer<typeof RulesFileSchema>;
 export const LearnedRuleSchema = z.object({
 	rule_id: z.string(),
 	signature_hash: z.string(),
+	/**
+	 * Drain-style fuzzy grouping key: the signature with numeric/quoted/hex
+	 * literals in the file/function/test-name/message replaced by placeholders.
+	 * Used as a fallback so failures differing only by an embedded id/number
+	 * coalesce into one learned rule (item 26). Optional for back-compat.
+	 */
+	normalized_hash: z.string().optional(),
 	error_type: z.string().optional(),
 	error_pattern: z.string().optional(),
 	file_pattern: z.string().optional(),

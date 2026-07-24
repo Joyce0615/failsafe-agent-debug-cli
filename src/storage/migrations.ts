@@ -194,6 +194,15 @@ export const MIGRATIONS: Migration[] = [
 			);
 		`,
 	},
+	{
+		version: 5,
+		name: "learned_rules_normalized_hash",
+		up: `
+			ALTER TABLE learned_rules ADD COLUMN normalized_hash TEXT;
+			CREATE INDEX IF NOT EXISTS idx_learned_rules_normalized
+				ON learned_rules(normalized_hash);
+		`,
+	},
 ];
 
 export function runMigrations(db: Database): void {

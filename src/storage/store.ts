@@ -198,6 +198,10 @@ export class FailsafeStore {
 		return this.sqlite.getLearnedRuleByHash(hash);
 	}
 
+	getLearnedRuleByNormalizedHash(normalizedHash: string): LearnedRule | null {
+		return this.sqlite.getLearnedRuleByNormalizedHash(normalizedHash);
+	}
+
 	/**
 	 * Retrieves a learned rule by its rule ID.
 	 */
