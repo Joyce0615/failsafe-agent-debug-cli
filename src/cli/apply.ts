@@ -25,13 +25,20 @@ export function registerApplyCommand(program: Command): void {
 		.command("apply <failure-id>")
 		.description("Apply a declared rule's suggested fix patch (dry-run unless --confirm)")
 		.option("--confirm", "Apply the patch (default is a validate-only dry run)")
+		.option(
+			"--validate",
+			"Rank fix candidates and apply the first that passes verify (Agentless-style)",
+		)
 		.option("--format <format>", "Output format: json or text")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.action(async (rawId: string, opts) => {
 			const { config, store, outOpts } = initCommand(opts);
 
-			const result = await applyFixById(rawId, store, config, { confirm: opts.confirm });
+			const result = await applyFixById(rawId, store, config, {
+				confirm: opts.confirm,
+				validate: opts.validate,
+			});
 
 			outputResult(result.data, outOpts, () => {
 				const d = result.data;

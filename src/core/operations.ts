@@ -20,6 +20,7 @@ import {
 import { generateRepro } from "../repro/engine.js";
 import { computeSignature } from "../repro/signatures.js";
 import { loadDeclaredRules } from "../rules/declared.js";
+import { computeSignatureHash } from "../rules/learned.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { redactSecrets } from "../security/redaction.js";
 import type { FailsafeStore } from "../storage/store.js";
@@ -666,7 +667,7 @@ export async function applyFixById(
 	rawId: string,
 	store: FailsafeStore,
 	config: FailsafeConfig,
-	opts: { confirm?: boolean } = {},
+	opts: { confirm?: boolean; validate?: boolean; timeoutMs?: number } = {},
 ): Promise<ApplyResult> {
 	const fid = resolveId(rawId, store);
 	const failure = fid ? store.getFailure(fid) : null;
@@ -681,7 +682,212 @@ export async function applyFixById(
 			},
 		};
 	}
+	if (opts.validate) {
+		return validateFixCandidates(failure, store, config, { timeoutMs: opts.timeoutMs });
+	}
 	return applyFix(failure, store, config, opts);
+}
+
+/** A ranked fix candidate drawn from the tiered rule system for a failure. */
+export type FixCandidate = {
+	kind: "declared_patch" | "learned_commands" | "builtin_suggestion";
+	confidence: number;
+	summary: string;
+	rule_id?: string;
+	/** Unified diff, present for `declared_patch`. */
+	patch?: string;
+	/** Shell/argv fix commands, present for `learned_commands`. */
+	commands?: string[];
+};
+
+/**
+ * Collect the fix candidates available for a diagnosed failure across all
+ * tiers, ranked by confidence (Agentless-style multi-candidate repair, item
+ * 28): a declared rule's `fix_patch`, a learned rule's `fix_commands`, and a
+ * builtin template suggestion. Only the declared patch is auto-validatable
+ * (revertible via `git apply -R`).
+ */
+export function buildFixCandidates(
+	failure: FailureRecord,
+	store: FailsafeStore,
+	config: FailsafeConfig,
+): FixCandidate[] {
+	const candidates: FixCandidate[] = [];
+
+	const patch = resolvePatch(failure, store, config);
+	if (patch) {
+		candidates.push({
+			kind: "declared_patch",
+			confidence: 0.9,
+			rule_id: patch.rule_id,
+			summary: `Apply declared-rule patch '${patch.rule_id}'`,
+			patch: patch.diff,
+		});
+	}
+
+	const allErrors = failure.parsed.flatMap((p) => p.errors);
+	const signatureHash = computeSignatureHash(allErrors, failure.primary_location);
+	const learned = store.getLearnedRuleByHash(signatureHash);
+	if (learned?.fix_commands && learned.fix_commands.length > 0) {
+		candidates.push({
+			kind: "learned_commands",
+			confidence: Math.min(learned.confidence, 0.85),
+			rule_id: learned.rule_id,
+			summary: learned.fix_summary ?? "Run learned fix commands",
+			commands: learned.fix_commands,
+		});
+	}
+
+	const diagnosis = store.getDiagnosis(failure.failure_id);
+	if (diagnosis?.root_cause) {
+		candidates.push({
+			kind: "builtin_suggestion",
+			confidence: Math.min(diagnosis.root_cause.confidence, 0.5),
+			summary: `Template suggestion for ${diagnosis.root_cause.category}`,
+		});
+	}
+
+	return candidates.sort((a, b) => b.confidence - a.confidence);
+}
+
+async function gitApplyPatch(
+	cwd: string,
+	diff: string,
+	opts: { reverse?: boolean; timeoutMs?: number } = {},
+): Promise<boolean> {
+	const dir = mkdtempSync(join(tmpdir(), "failsafe-validate-"));
+	const patchFile = join(dir, "candidate.patch");
+	writeFileSync(patchFile, diff.endsWith("\n") ? diff : `${diff}\n`);
+	try {
+		const argv = opts.reverse ? ["git", "apply", "-R", patchFile] : ["git", "apply", patchFile];
+		const res = await runCommand(argv.join(" "), {
+			cwd,
+			timeout_ms: opts.timeoutMs ?? 30_000,
+			argv,
+		});
+		return res.exit_code === 0;
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Validate ranked fix candidates against the failure (item 28). Applies each
+ * auto-validatable (declared-patch) candidate in rank order, re-runs
+ * `verifyFailure` (repro + original command), and returns the FIRST candidate
+ * that flips the signature to passing — reverting any candidate that does not
+ * resolve so later candidates apply to a clean tree. Non-patch candidates are
+ * reported but skipped (their commands cannot be safely auto-reverted).
+ */
+export async function validateFixCandidates(
+	failure: FailureRecord,
+	store: FailsafeStore,
+	config: FailsafeConfig,
+	opts: { timeoutMs?: number } = {},
+): Promise<ApplyResult> {
+	const failureId = failure.failure_id;
+	if (!store.getDiagnosis(failureId)) {
+		return {
+			exit_code: ExitCode.NO_INPUT,
+			data: {
+				error: true,
+				failure_id: failureId,
+				status: "no_diagnosis",
+				message: `No diagnosis found. Run \`failsafe diagnose ${failureId}\` first.`,
+			},
+		};
+	}
+	return validateCandidates(
+		failure,
+		store,
+		config,
+		buildFixCandidates(failure, store, config),
+		opts,
+	);
+}
+
+/**
+ * Apply and verify a ranked candidate list against a failure, returning the
+ * first candidate that resolves it (reverting non-resolving patches so later
+ * candidates apply cleanly). Exposed separately from {@link buildFixCandidates}
+ * so callers/tests can supply an explicit candidate set.
+ */
+export async function validateCandidates(
+	failure: FailureRecord,
+	store: FailsafeStore,
+	config: FailsafeConfig,
+	candidates: FixCandidate[],
+	opts: { timeoutMs?: number } = {},
+): Promise<ApplyResult> {
+	const failureId = failure.failure_id;
+	const ranked = candidates.map((c) => ({
+		kind: c.kind,
+		confidence: c.confidence,
+		summary: c.summary,
+		rule_id: c.rule_id,
+	}));
+	const attempts: Array<{
+		kind: string;
+		rule_id?: string;
+		status: "resolved" | "unresolved" | "apply_failed" | "skipped";
+	}> = [];
+
+	for (const candidate of candidates) {
+		if (candidate.kind !== "declared_patch" || !candidate.patch) {
+			attempts.push({ kind: candidate.kind, rule_id: candidate.rule_id, status: "skipped" });
+			continue;
+		}
+
+		const applied = await gitApplyPatch(failure.cwd, candidate.patch, {
+			timeoutMs: opts.timeoutMs,
+		});
+		if (!applied) {
+			attempts.push({ kind: candidate.kind, rule_id: candidate.rule_id, status: "apply_failed" });
+			continue;
+		}
+
+		const verify = await verifyFailure(failureId, store, config, { timeoutMs: opts.timeoutMs });
+		const passed = verify.ok && verify.data.status === "passed";
+		if (passed) {
+			attempts.push({ kind: candidate.kind, rule_id: candidate.rule_id, status: "resolved" });
+			return {
+				exit_code: ExitCode.OK,
+				data: {
+					failure_id: failureId,
+					status: "validated",
+					selected: {
+						kind: candidate.kind,
+						rule_id: candidate.rule_id,
+						confidence: candidate.confidence,
+						summary: candidate.summary,
+					},
+					fix_candidates: ranked,
+					attempts,
+					next: [
+						{
+							command: `failsafe verify ${failureId}`,
+							reason: "Re-confirm the applied fix",
+						},
+					],
+				},
+			};
+		}
+
+		// Did not resolve — revert so the next candidate applies cleanly.
+		await gitApplyPatch(failure.cwd, candidate.patch, { reverse: true, timeoutMs: opts.timeoutMs });
+		attempts.push({ kind: candidate.kind, rule_id: candidate.rule_id, status: "unresolved" });
+	}
+
+	return {
+		exit_code: ExitCode.ERROR,
+		data: {
+			failure_id: failureId,
+			status: "no_fix_validated",
+			message: "No candidate fix resolved the failure.",
+			fix_candidates: ranked,
+			attempts,
+		},
+	};
 }
 
 function resolveId(rawId: string, store: FailsafeStore): string | null {
