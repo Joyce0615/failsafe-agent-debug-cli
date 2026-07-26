@@ -98,19 +98,48 @@ function emit(packet: WatchPacket): void {
 	console.log(JSON.stringify(packet));
 }
 
+/**
+ * Injectable timer source so the debounce clock is deterministic in tests. The
+ * default binds to the global timers; a test can supply a manual scheduler and
+ * flush it explicitly instead of racing wall-clock time.
+ */
+export type WatchScheduler = {
+	setTimeout(fn: () => void, ms: number): unknown;
+	clearTimeout(handle: unknown): void;
+};
+
+const defaultScheduler: WatchScheduler = {
+	setTimeout: (fn, ms) => setTimeout(fn, ms),
+	clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+};
+
 /** Controls a running watch loop: stop watching and await clean teardown. */
 export type WatchHandle = {
 	/** Stop watching: clears any pending debounce timer and closes the watcher. */
 	close(): void;
-	/** Resolves once any in-flight cycle has settled (for clean teardown). */
+	/**
+	 * Resolves once the loop is idle: no debounce timer pending, no cycle
+	 * running, and no dirty follow-up outstanding. Deterministic teardown /
+	 * synchronization point for tests (no packet-length polling).
+	 */
 	drain(): Promise<void>;
+	/** Inject a change event (also called by the fs watcher). */
+	notify(filename?: string): void;
+	/** Number of cycles that have run so far. */
+	cyclesRun(): number;
+	/** Peak number of concurrently-running cycles observed (must stay 1). */
+	maxConcurrent(): number;
 };
 
 /**
  * The long-running watch loop. Runs an initial cycle, then re-runs (debounced)
- * on any change under `cwd`, skipping storage/VCS/dependency noise. Returns a
- * handle so callers/tests can stop it and drain in-flight work; in normal CLI
- * use the process simply runs until interrupted.
+ * on any change under `cwd`, skipping storage/VCS/dependency noise.
+ *
+ * Delivery is made deterministic (item 34): cycles are strictly serialized and a
+ * dirty latch guarantees that any changes arriving while a cycle is running
+ * schedule EXACTLY ONE follow-up cycle (no lost edge, no overlap). The debounce
+ * clock and the per-cycle runner are injectable so tests can drive the loop
+ * without wall-clock races and await `drain()` (idle) instead of polling.
  */
 export function watchLoop(
 	command: string,
@@ -123,65 +152,118 @@ export function watchLoop(
 		shell?: boolean;
 		noPolicy?: boolean;
 		onCycle?: (packet: WatchPacket) => void;
+		scheduler?: WatchScheduler;
+		/** Override the per-cycle work (defaults to `runWatchCycle`). */
+		runCycle?: (cycle: number) => Promise<WatchPacket>;
 	},
 ): WatchHandle {
 	const debounceMs = opts.debounceMs ?? 300;
 	const onCycle = opts.onCycle ?? emit;
+	const scheduler = opts.scheduler ?? defaultScheduler;
 	// Ignore churn from our own storage, VCS metadata, and dependencies so an
 	// edit doesn't trigger an infinite re-run loop via written run artifacts.
 	const ignored = [".failsafe", ".git", "node_modules", "dist"];
+
+	const cycleOpts = { timeoutMs: opts.timeoutMs, shell: opts.shell, noPolicy: opts.noPolicy };
+	const runCycle =
+		opts.runCycle ?? ((n: number) => runWatchCycle(command, config, store, n, cycleOpts));
+
 	let cycle = 0;
 	let running = false;
-	let pending = false;
+	let dirty = false;
 	let stopped = false;
+	let concurrent = 0;
+	let peakConcurrent = 0;
+	let timer: unknown;
 	let inFlight: Promise<void> = Promise.resolve();
-	let timer: ReturnType<typeof setTimeout> | undefined;
+	const idleResolvers: Array<() => void> = [];
 
-	const cycleOpts = {
-		timeoutMs: opts.timeoutMs,
-		shell: opts.shell,
-		noPolicy: opts.noPolicy,
-	};
+	function isIdle(): boolean {
+		// Once stopped we consider the loop idle as soon as no cycle is running,
+		// so a pending dirty latch can never wedge teardown.
+		return !running && (stopped ? true : !dirty && timer === undefined);
+	}
 
-	function trigger(): void {
-		if (stopped || running) {
-			if (!stopped) pending = true;
+	function settleIfIdle(): void {
+		if (isIdle() && idleResolvers.length > 0) {
+			const resolvers = idleResolvers.splice(0);
+			for (const resolve of resolvers) resolve();
+		}
+	}
+
+	function runCycleSerialized(): void {
+		if (stopped) {
+			settleIfIdle();
+			return;
+		}
+		if (running) {
+			// A cycle is in flight: latch a single follow-up regardless of how many
+			// changes arrive before it finishes.
+			dirty = true;
 			return;
 		}
 		running = true;
+		concurrent += 1;
+		peakConcurrent = Math.max(peakConcurrent, concurrent);
 		inFlight = (async () => {
 			try {
-				const packet = await runWatchCycle(command, config, store, ++cycle, cycleOpts);
+				const packet = await runCycle(++cycle);
 				onCycle(packet);
 			} finally {
+				concurrent -= 1;
 				running = false;
-				if (pending && !stopped) {
-					pending = false;
-					trigger();
+				if (dirty && !stopped) {
+					dirty = false;
+					runCycleSerialized();
+				} else {
+					settleIfIdle();
 				}
 			}
 		})();
 	}
 
-	const watcher = watch(opts.cwd, { recursive: true }, (_event, filename) => {
+	function notify(filename?: string): void {
 		if (stopped) return;
 		if (filename && ignored.some((seg) => filename.split(/[\\/]/).includes(seg))) return;
-		if (timer) clearTimeout(timer);
-		timer = setTimeout(() => trigger(), debounceMs);
+		if (timer !== undefined) scheduler.clearTimeout(timer);
+		timer = scheduler.setTimeout(() => {
+			timer = undefined;
+			runCycleSerialized();
+		}, debounceMs);
+	}
+
+	const watcher = watch(opts.cwd, { recursive: true }, (_event, filename) => {
+		notify(filename ?? undefined);
 	});
 
 	// Kick off an initial cycle so the first packet reflects the current state.
-	trigger();
+	runCycleSerialized();
 
 	return {
 		close() {
 			stopped = true;
-			if (timer) clearTimeout(timer);
+			if (timer !== undefined) {
+				scheduler.clearTimeout(timer);
+				timer = undefined;
+			}
 			watcher.close();
+			settleIfIdle();
 		},
 		drain() {
-			return inFlight;
+			return new Promise<void>((resolve) => {
+				if (isIdle()) {
+					resolve();
+					return;
+				}
+				idleResolvers.push(resolve);
+				// Also chain the current in-flight cycle so a resolver added mid-cycle
+				// is revisited when that cycle's finally runs settleIfIdle.
+				void inFlight;
+			});
 		},
+		notify,
+		cyclesRun: () => cycle,
+		maxConcurrent: () => peakConcurrent,
 	};
 }
 

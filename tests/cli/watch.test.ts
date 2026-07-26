@@ -12,7 +12,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ExitCode } from "../../src/cli/exit-codes.js";
-import { type WatchPacket, runWatchCycle, watchLoop } from "../../src/cli/watch.js";
+import {
+	type WatchPacket,
+	type WatchScheduler,
+	runWatchCycle,
+	watchLoop,
+} from "../../src/cli/watch.js";
 import { FailsafeStore } from "../../src/storage/store.js";
 import { DEFAULT_CONFIG, type FailsafeConfig } from "../../src/types/config.js";
 
@@ -102,5 +107,121 @@ describe("watchLoop", () => {
 			// Let any in-flight cycle settle before afterEach closes the store.
 			await watcher.drain();
 		}
+	});
+});
+
+describe("watchLoop determinism (item 34)", () => {
+	/** A manual scheduler: timers only fire when the test flushes them. */
+	function manualScheduler(): { scheduler: WatchScheduler; flush: () => void } {
+		const timers = new Set<{ fn: () => void }>();
+		return {
+			scheduler: {
+				setTimeout: (fn) => {
+					const t = { fn };
+					timers.add(t);
+					return t;
+				},
+				clearTimeout: (h) => {
+					timers.delete(h as { fn: () => void });
+				},
+			},
+			flush: () => {
+				const pending = [...timers];
+				timers.clear();
+				for (const t of pending) t.fn();
+			},
+		};
+	}
+
+	/** A controllable cycle: each call returns a promise the test resolves. */
+	function controllableCycle() {
+		let release: (() => void) | undefined;
+		const gate = () =>
+			new Promise<void>((resolve) => {
+				release = resolve;
+			});
+		return { gate, release: () => release?.() };
+	}
+
+	test("100 rapid changes during a slow cycle schedule exactly one follow-up, no overlap", async () => {
+		const { scheduler, flush } = manualScheduler();
+		const packets: WatchPacket[] = [];
+		const cyclePromises: Array<Promise<void>> = [];
+		const gates: Array<() => void> = [];
+
+		const handle = watchLoop("node pass.js", config, store, {
+			cwd: workDir,
+			debounceMs: 10,
+			scheduler,
+			onCycle: (p) => packets.push(p),
+			runCycle: async (n) => {
+				// Each cycle blocks until the test releases it.
+				let release!: () => void;
+				const done = new Promise<void>((r) => {
+					release = r;
+				});
+				gates.push(release);
+				cyclePromises.push(done);
+				await done;
+				return { event: "result", cycle: n, status: "passed", exit_code: 0 };
+			},
+		});
+
+		try {
+			// The initial cycle is now running (cycle 1) and blocked on its gate.
+			expect(handle.cyclesRun()).toBe(1);
+			expect(handle.maxConcurrent()).toBe(1);
+
+			// Inject 100 rapid changes while cycle 1 is in flight; the debounce
+			// collapses them to a single scheduled timer.
+			for (let i = 0; i < 100; i++) handle.notify(`file${i}.ts`);
+			flush(); // fire the debounce → runCycleSerialized sees a running cycle → latches dirty
+
+			// Still only one cycle running; the 100 changes did not start a new one.
+			expect(handle.cyclesRun()).toBe(1);
+			expect(handle.maxConcurrent()).toBe(1);
+
+			// Release cycle 1 → the dirty latch schedules EXACTLY ONE follow-up (cycle 2).
+			gates[0]();
+			await cyclePromises[0];
+			// Give the microtask that starts cycle 2 a tick.
+			await Promise.resolve();
+			expect(handle.cyclesRun()).toBe(2);
+			expect(handle.maxConcurrent()).toBe(1);
+
+			// Release cycle 2 → loop goes idle (no third cycle from the latched batch).
+			gates[1]();
+			await handle.drain();
+			expect(handle.cyclesRun()).toBe(2);
+			expect(handle.maxConcurrent()).toBe(1);
+			expect(packets.map((p) => p.cycle)).toEqual([1, 2]);
+		} finally {
+			handle.close();
+			await handle.drain();
+		}
+	});
+
+	test("drain resolves cleanly when closed mid-cycle", async () => {
+		const { scheduler } = manualScheduler();
+		let releaseCycle: (() => void) | undefined;
+
+		const handle = watchLoop("node pass.js", config, store, {
+			cwd: workDir,
+			scheduler,
+			onCycle: () => {},
+			runCycle: async (n) => {
+				await new Promise<void>((r) => {
+					releaseCycle = r;
+				});
+				return { event: "result", cycle: n, status: "passed", exit_code: 0 };
+			},
+		});
+
+		// Cycle 1 is running. Close while it is in flight, then release it.
+		handle.close();
+		const drained = handle.drain();
+		releaseCycle?.();
+		await drained; // must resolve — no wedge from the dirty latch after close
+		expect(handle.cyclesRun()).toBe(1);
 	});
 });
