@@ -1,71 +1,8 @@
 import type { Command } from "commander";
-import { checkRuntimeCapability } from "../debug/adapters/index.js";
-import { detectRuntime } from "../debug/launch.js";
-import { extractSourceSlice } from "../diagnosis/context.js";
-import type { SourceLocation } from "../types/common.js";
+import { debugGuidance } from "../core/debug-guidance.js";
 import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
-import { initCommand, resolveFailureOrExit } from "./shared.js";
-
-/**
- * Build an interactive debugpy launch command for a Python command.
- * The agent/human runs this in a terminal; debugpy waits for an IDE/DAP
- * client to attach, then execution stops at the breakpoint.
- */
-function buildDebugpyLaunchCommand(command: string, port: number): string {
-	const pytestMatch = command.match(/(?:python3?\s+-m\s+)?pytest\s+(.+)/);
-	const listen = `--listen 127.0.0.1:${port} --wait-for-client`;
-	if (pytestMatch) {
-		return `python3 -m debugpy ${listen} -m pytest ${pytestMatch[1]}`;
-	}
-	const moduleMatch = command.match(/python3?\s+-m\s+(\S+)(?:\s+(.+))?/);
-	if (moduleMatch) {
-		const args = moduleMatch[2] ? ` ${moduleMatch[2]}` : "";
-		return `python3 -m debugpy ${listen} -m ${moduleMatch[1]}${args}`;
-	}
-	const scriptMatch = command.match(/python3?\s+(\S+\.py)(?:\s+(.+))?/);
-	if (scriptMatch) {
-		const args = scriptMatch[2] ? ` ${scriptMatch[2]}` : "";
-		return `python3 -m debugpy ${listen} ${scriptMatch[1]}${args}`;
-	}
-	// Fallback: strip a leading python/python3 so we don't double the interpreter.
-	const rest = command.replace(/^python3?\s+/, "");
-	return `python3 -m debugpy ${listen} ${rest}`;
-}
-
-/**
- * Build a Node launch command using the built-in V8 inspector. `--inspect-brk`
- * pauses on the first line and waits for a DAP/IDE client to attach — the
- * Node analogue of debugpy's `--listen --wait-for-client`. No extra install is
- * needed: the inspector ships with Node.
- */
-function buildNodeInspectLaunchCommand(command: string, port: number): string {
-	const brk = `--inspect-brk=127.0.0.1:${port}`;
-
-	// npx/direct jest → run the local binary single-threaded so breakpoints hit.
-	const jestMatch = command.match(/(?:npx\s+)?jest\s+(.+)/);
-	if (jestMatch) {
-		return `node ${brk} node_modules/.bin/jest --runInBand ${jestMatch[1]}`;
-	}
-	// npx/direct vitest → run the local binary.
-	const vitestMatch = command.match(/(?:npx\s+)?vitest\s+(.+)/);
-	if (vitestMatch) {
-		return `node ${brk} node_modules/.bin/vitest ${vitestMatch[1]}`;
-	}
-	// bun uses its own inspector flag rather than node's.
-	const bunMatch = command.match(/^bun\s+(.+)/);
-	if (bunMatch) {
-		return `bun --inspect-brk=127.0.0.1:${port} ${bunMatch[1]}`;
-	}
-	// node script.js args
-	const nodeMatch = command.match(/^node\s+(.+)/);
-	if (nodeMatch) {
-		return `node ${brk} ${nodeMatch[1]}`;
-	}
-	// Fallback: strip a leading node so we don't double the interpreter.
-	const rest = command.replace(/^node\s+/, "");
-	return `node ${brk} ${rest}`;
-}
+import { initCommand } from "./shared.js";
 
 export function registerDebugCommand(program: Command): void {
 	program
@@ -82,120 +19,14 @@ export function registerDebugCommand(program: Command): void {
 		.action(async (rawId: string, opts) => {
 			const { store, outOpts } = initCommand(opts);
 
-			const { failureId, failure } = resolveFailureOrExit(rawId, store, outOpts);
+			const result = await debugGuidance(rawId, store, {
+				break: opts.break,
+				port: Number.parseInt(opts.port, 10),
+				runtime: opts.runtime,
+			});
 
-			// Determine breakpoint
-			let breakpoint: SourceLocation;
-			if (opts.break === "primary") {
-				if (failure.primary_location) {
-					breakpoint = failure.primary_location;
-				} else {
-					outputResult(
-						{ error: true, message: "No primary location for this failure. Use --break file:line" },
-						outOpts,
-					);
-					process.exit(ExitCode.ERROR);
-				}
-			} else {
-				const match = opts.break.match(/^(.+):(\d+)$/);
-				if (match) {
-					breakpoint = { file: match[1], line: Number.parseInt(match[2], 10) };
-				} else {
-					outputResult(
-						{ error: true, message: `Invalid breakpoint format: ${opts.break}. Use file:line` },
-						outOpts,
-					);
-					process.exit(ExitCode.ERROR);
-				}
-			}
-
-			// Prefer the minimal repro command for debugging if one exists
-			const repro = store.getRepro(failureId);
-			const command = repro?.command ?? failure.command;
-			const runtime = opts.runtime ?? detectRuntime(command);
-
-			// Capability gate: only runtimes with a working adapter get guidance
-			const capability = checkRuntimeCapability(runtime, failure.failure_id);
-			if (!capability.supported) {
-				outputResult(
-					{
-						error: true,
-						unsupported_runtime: true,
-						runtime: capability.runtime,
-						reason: capability.reason,
-						future_debugger: capability.future_debugger,
-						install_hint: capability.install_hint,
-						next: capability.next_best,
-					},
-					outOpts,
-				);
-				process.exit(ExitCode.DEBUG_UNAVAILABLE);
-			}
-
-			// Check the adapter is installed
-			const adapterAvailable = await capability.adapter.isAvailable();
-			if (!adapterAvailable) {
-				outputResult(
-					{
-						error: true,
-						adapter_missing: true,
-						runtime: capability.runtime,
-						adapter: capability.adapter.name,
-						install_hint: capability.adapter.installHint,
-						next: [
-							{
-								command: `failsafe diagnose ${failure.failure_id}`,
-								reason: "Get diagnosis without debugging",
-							},
-						],
-					},
-					outOpts,
-				);
-				process.exit(ExitCode.DEBUG_UNAVAILABLE);
-			}
-
-			// Emit non-interactive launch guidance. Failsafe does not manage a
-			// long-lived debug session across CLI invocations; instead it hands
-			// the agent/human a ready-to-run command to start an interactive
-			// debugger that pauses at the failure location.
-			const port = Number.parseInt(opts.port, 10);
-			const isNode = capability.runtime === "node";
-			const launchCommand = isNode
-				? buildNodeInspectLaunchCommand(command, port)
-				: buildDebugpyLaunchCommand(command, port);
-
-			// Source context around the breakpoint
-			const slice = await extractSourceSlice(breakpoint, 5);
-
-			const attachInstruction = isNode
-				? `Attach a DAP client / IDE to 127.0.0.1:${port} (e.g. VS Code 'Node: Attach' or chrome://inspect).`
-				: `Attach a DAP client / IDE to 127.0.0.1:${port} (e.g. VS Code 'Python: Remote Attach').`;
-			const setBreakpointInstruction = isNode
-				? `Set a breakpoint at ${breakpoint.file}:${breakpoint.line} in your editor (execution pauses on the first line until you attach).`
-				: `Set a breakpoint at ${breakpoint.file}:${breakpoint.line} in your editor or via 'breakpoint()'.`;
-
-			const output: Record<string, unknown> = {
-				mode: "launch_guidance",
-				runtime: capability.runtime,
-				adapter: capability.adapter.name,
-				breakpoint: { file: breakpoint.file, line: breakpoint.line, symbol: breakpoint.symbol },
-				launch_command: launchCommand,
-				instructions: [setBreakpointInstruction, `Run: ${launchCommand}`, attachInstruction],
-				note: "Failsafe does not maintain interactive debug sessions across CLI invocations. The 'step' and 'inspect' commands are experimental and only operate within a single process.",
-			};
-
-			if (slice) {
-				output.source_context = slice.text;
-			}
-
-			output.next = [
-				{
-					command: `failsafe diagnose ${failure.failure_id}`,
-					reason: "Get a root-cause diagnosis without launching a debugger",
-				},
-			];
-
-			outputResult(output, outOpts);
+			outputResult(result.data, outOpts);
 			store.close();
+			if (result.exit_code !== ExitCode.OK) process.exit(result.exit_code);
 		});
 }

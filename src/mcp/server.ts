@@ -21,11 +21,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { ExitCode } from "../cli/exit-codes.js";
 import { createStore, loadConfig } from "../cli/shared.js";
+import { debugGuidance, debugSessionUnavailable } from "../core/debug-guidance.js";
 import {
 	analyzeCommand,
 	applyFixById,
 	diagnoseFailure,
 	explainFailure,
+	historyQuery,
 	reproFailure,
 	verifyFailure,
 } from "../core/operations.js";
@@ -183,6 +185,84 @@ export function createFailsafeMcpServer(): McpServer {
 			} finally {
 				store.close();
 			}
+		},
+	);
+
+	server.tool(
+		"failsafe_history",
+		"List prior failures, or (with a `similar` failure id) failures matching that failure's signature. Same contract as `failsafe history`.",
+		{
+			limit: z.number().optional().describe("Max failures to list (default 10)"),
+			similar: z
+				.string()
+				.optional()
+				.describe("A failure id: return failures similar to it instead of the full list"),
+		},
+		async ({ limit, similar }) => {
+			const config = loadConfig();
+			const store = createStore(config);
+			try {
+				return toToolResponse(historyQuery(store, { limit, similar }));
+			} finally {
+				store.close();
+			}
+		},
+	);
+
+	server.tool(
+		"failsafe_debug",
+		"Emit interactive-debugger launch guidance (a ready-to-run command + breakpoint) for a stored failure. Same contract as `failsafe debug` — no live session is held.",
+		{
+			failure_id: z.string().describe("Failure id, or 'last' for the most recent failure"),
+			break: z.string().optional().describe("Breakpoint: 'primary' (default) or file:line"),
+			port: z.number().optional().describe("Debugger listen port (default 5678)"),
+			runtime: z.string().optional().describe("Override runtime detection: python or node"),
+		},
+		async ({ failure_id, break: breakSpec, port, runtime }) => {
+			const config = loadConfig();
+			const store = createStore(config);
+			try {
+				const result = await debugGuidance(failure_id, store, {
+					break: breakSpec,
+					port,
+					runtime,
+				});
+				return {
+					content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+					isError: result.exit_code !== ExitCode.OK,
+				};
+			} finally {
+				store.close();
+			}
+		},
+	);
+
+	// step/inspect operate only within a single live process; over MCP (a fresh
+	// call) there is no session to reconnect to, so both return the documented
+	// debug_unavailable packet — the same contract as a cross-invocation CLI call.
+	const sessionArg = { session: z.string().describe("Debug session id") };
+	server.tool(
+		"failsafe_step",
+		"Step an in-memory debug session. Debug sessions do not persist across invocations, so over MCP this returns the debug_unavailable contract; use failsafe_debug for launch guidance.",
+		sessionArg,
+		async ({ session }) => {
+			const result = debugSessionUnavailable(session);
+			return {
+				content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+				isError: true,
+			};
+		},
+	);
+	server.tool(
+		"failsafe_inspect",
+		"Inspect an in-memory debug session. Debug sessions do not persist across invocations, so over MCP this returns the debug_unavailable contract; use failsafe_debug for launch guidance.",
+		sessionArg,
+		async ({ session }) => {
+			const result = debugSessionUnavailable(session);
+			return {
+				content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+				isError: true,
+			};
 		},
 	);
 

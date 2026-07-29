@@ -66,9 +66,13 @@ describe("MCP server: tools/list", () => {
 		expect(names).toEqual([
 			"failsafe_analyze",
 			"failsafe_apply",
+			"failsafe_debug",
 			"failsafe_diagnose",
 			"failsafe_explain",
+			"failsafe_history",
+			"failsafe_inspect",
 			"failsafe_repro",
+			"failsafe_step",
 			"failsafe_verify",
 		]);
 		// Each tool advertises an input schema with a description.
@@ -203,6 +207,56 @@ describe("MCP server: failsafe_apply", () => {
 		expect(isError).toBe(true);
 		expect(json.status).toBe("no_patch");
 	}, 30_000);
+});
+
+describe("MCP server: failsafe_history", () => {
+	test("lists prior failures", async () => {
+		await callTool("failsafe_analyze", { command: 'node -e "process.exit(1)"' });
+		const { isError, json } = await callTool("failsafe_history", { limit: 5 });
+		expect(isError).toBe(false);
+		expect(Array.isArray(json.failures)).toBe(true);
+		expect((json.failures as unknown[]).length).toBeGreaterThan(0);
+	}, 30_000);
+});
+
+describe("MCP server: failsafe_debug", () => {
+	test("emits launch guidance for a supported runtime (or a structured unavailable packet)", async () => {
+		await callTool("failsafe_analyze", { command: "python3 -c \"raise KeyError('x')\"" });
+		const { isError, json } = await callTool("failsafe_debug", {
+			failure_id: "last",
+			break: "src/x.py:1",
+		});
+		if (!isError) {
+			expect(json.mode).toBe("launch_guidance");
+			expect(json.runtime).toBe("python");
+		} else {
+			// debugpy not installed → adapter_missing (still the debug contract).
+			expect(json.error).toBe(true);
+		}
+	}, 30_000);
+
+	test("go/rust/etc. return the unsupported_runtime packet (isError)", async () => {
+		await callTool("failsafe_analyze", { command: 'node -e "process.exit(1)"' });
+		const { isError, json } = await callTool("failsafe_debug", {
+			failure_id: "last",
+			break: "x:1",
+			runtime: "go",
+		});
+		expect(isError).toBe(true);
+		expect(json.unsupported_runtime).toBe(true);
+		expect(json.runtime).toBe("go");
+	}, 30_000);
+});
+
+describe("MCP server: failsafe_step / failsafe_inspect", () => {
+	test("both return the debug_unavailable session-boundary packet", async () => {
+		const step = await callTool("failsafe_step", { session: "dbg_missing" });
+		expect(step.isError).toBe(true);
+		expect(step.json.debug_unavailable).toBe(true);
+		const inspect = await callTool("failsafe_inspect", { session: "dbg_missing" });
+		expect(inspect.isError).toBe(true);
+		expect(inspect.json.debug_unavailable).toBe(true);
+	});
 });
 
 describe("MCP server: resources", () => {

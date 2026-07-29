@@ -890,6 +890,46 @@ export async function validateCandidates(
 	};
 }
 
+/**
+ * Query stored failure history — the compact list, or (with `similar`) failures
+ * matching a given failure's signature. Mirrors `failsafe history` so the CLI
+ * and the `failsafe_history` MCP tool share one contract.
+ */
+export function historyQuery(
+	store: FailsafeStore,
+	opts: { limit?: number; similar?: string } = {},
+): CoreResult<Record<string, unknown>> {
+	if (opts.similar) {
+		const fid = resolveId(opts.similar, store);
+		const failure = fid ? store.getFailure(fid) : null;
+		if (!failure) return notFound(opts.similar);
+		const allErrors = failure.parsed.flatMap((p) => p.errors);
+		const signature = computeSignature(allErrors, failure.primary_location);
+		return {
+			ok: true,
+			data: {
+				query_failure_id: failure.failure_id,
+				similar_failures: store.findSimilarFailures(signature),
+			},
+		};
+	}
+
+	const failures = store.listFailures({ limit: opts.limit ?? 10 });
+	return {
+		ok: true,
+		data: {
+			failures: failures.map((f) => ({
+				failure_id: f.failure_id,
+				created_at: f.created_at,
+				status: f.status,
+				command: f.command,
+				summary: f.parsed[0]?.errors[0]?.message ?? "Unknown",
+				primary_location: f.primary_location,
+			})),
+		},
+	};
+}
+
 function resolveId(rawId: string, store: FailsafeStore): string | null {
 	if (rawId === "--last" || rawId === "last") {
 		return store.getFailure("last")?.failure_id ?? null;
