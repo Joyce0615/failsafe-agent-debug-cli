@@ -96,6 +96,13 @@ export class FailsafeFiles {
 	}
 
 	/**
+	 * Reads the combined stdout+stderr log for a failure. Returns null if missing.
+	 */
+	readCombined(failureId: string): string | null {
+		return this.readFileOrNull(join(this.runsDir, failureId, "combined.log"));
+	}
+
+	/**
 	 * Reads parsed failure data for a given failure. Returns null if file doesn't exist.
 	 */
 	readParsed(failureId: string): ParsedFailure[] | null {

@@ -158,10 +158,9 @@ export class FailsafeStore {
 	/**
 	 * Reads raw stdout or stderr output for a failure from disk.
 	 */
-	getRawOutput(failureId: string, kind: "stdout" | "stderr"): string | null {
-		if (kind === "stdout") {
-			return this.files.readStdout(failureId);
-		}
+	getRawOutput(failureId: string, kind: "stdout" | "stderr" | "combined"): string | null {
+		if (kind === "stdout") return this.files.readStdout(failureId);
+		if (kind === "combined") return this.files.readCombined(failureId);
 		return this.files.readStderr(failureId);
 	}
 
