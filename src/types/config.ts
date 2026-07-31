@@ -67,6 +67,8 @@ export const FailsafeConfigSchema = z.object({
 				.default({}),
 			staleness_days: z.number().int().default(90),
 			flaky_recurrence_threshold: z.number().int().default(3),
+			/** Unresolved recurrences of one signature before a loop_warning fires. */
+			loop_warning_threshold: z.number().int().default(3),
 		})
 		.default({}),
 });

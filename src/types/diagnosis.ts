@@ -77,5 +77,18 @@ export const FailureDiagnosisSchema = z.object({
 	rule_source: RuleSourceSchema.optional(),
 	rule_id: z.string().optional(),
 	enforcement: EnforcementLevelSchema.optional(),
+	/**
+	 * Emitted when the same failure signature keeps recurring unresolved past a
+	 * threshold: a signal to stop blind patching and confirm the root cause at
+	 * runtime via the debugger instead (DESIGN §11.3).
+	 */
+	loop_warning: z
+		.object({
+			detected: z.literal(true),
+			occurrences: z.number().int(),
+			reason: z.string(),
+			recommendation: z.string(),
+		})
+		.optional(),
 });
 export type FailureDiagnosis = z.infer<typeof FailureDiagnosisSchema>;

@@ -88,12 +88,32 @@ export async function diagnose(
 	// always reflects current flaky state.
 	const isFlaky = checkFlaky(store, signatureHash, config?.rules?.flaky_recurrence_threshold ?? 3);
 
+	// Loop detection (DESIGN §11.3): count unresolved recurrences of this
+	// signature and, past a threshold, steer the agent away from another blind
+	// patch toward runtime confirmation. Computed outside the cache (recurrence
+	// grows over time) and overlaid on both the cached and fresh packets.
+	const loopThreshold = config?.rules?.loop_warning_threshold ?? 3;
+	const recurrenceCount = store.countUnresolvedAfterDate(signatureHash, "1970-01-01T00:00:00.000Z");
+	const loopWarning: FailureDiagnosis["loop_warning"] =
+		recurrenceCount >= loopThreshold
+			? {
+					detected: true,
+					occurrences: recurrenceCount,
+					reason: `This failure signature has recurred unresolved ${recurrenceCount} times; repeated patches are not converging.`,
+					recommendation: `Stop patching blind — confirm the root cause at runtime: run 'failsafe debug ${failure.failure_id} --break primary', then step/inspect the failing state before the next fix.`,
+				}
+			: undefined;
+
 	if (!isFlaky) {
 		const cached = store.getCachedDiagnosis?.(cacheKey);
 		if (cached) {
 			// Re-stamp the cached packet for this specific failure; everything else
-			// is signature-determined and therefore identical.
-			return { ...cached, failure_id: failure.failure_id };
+			// is signature-determined and therefore identical. Overlay the current
+			// loop_warning so a stale cache entry never hides a fresh loop signal.
+			// Cached packets are stored loop_warning-free, so only add it here.
+			const packet: FailureDiagnosis = { ...cached, failure_id: failure.failure_id };
+			if (loopWarning) packet.loop_warning = loopWarning;
+			return packet;
 		}
 	}
 
@@ -240,10 +260,13 @@ export async function diagnose(
 	const diagBytes = Buffer.byteLength(JSON.stringify(diagnosis));
 	diagnosis.token_budget = computeTokenBudget(rawBytes, diagBytes);
 
-	// Cache the freshly computed packet for identical, non-flaky signatures.
+	// Cache the freshly computed packet (loop_warning-free — recurrence is
+	// time-varying) for identical, non-flaky signatures, then overlay the
+	// current loop_warning on the returned packet.
 	if (!isFlaky) {
 		store.saveCachedDiagnosis?.(cacheKey, diagnosis);
 	}
+	if (loopWarning) diagnosis.loop_warning = loopWarning;
 
 	return diagnosis;
 }
