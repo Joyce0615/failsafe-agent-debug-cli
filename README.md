@@ -38,7 +38,7 @@ failsafe verify last
 failsafe resolve last --success --fix-summary "Added null check"
 ```
 
-All commands output JSON by default. Use `--format text` for human-readable output. Use `--max-bytes` to cap output size.
+All commands output JSON by default. Use `--format text` for human-readable output. Use `--max-bytes` to cap output size. On `diagnose`/`explain`, `--evidence-only` drops suggested fixes and next actions (keeping `evidence`, `uncertainty`, `minimal_context`, and a recomputed `token_budget`) for agents that prefer to reason for themselves.
 
 ## Commands
 

@@ -84,7 +84,8 @@ export function formatDiagnosisText(diag: FailureDiagnosis): string {
 			lines.push(`  - ${u}`);
 		}
 	}
-	if (diag.suggested_next_actions.length > 0) {
+	// May be absent under --evidence-only, which strips fix/next-action fields.
+	if (diag.suggested_next_actions && diag.suggested_next_actions.length > 0) {
 		lines.push("Next actions:");
 		for (const a of diag.suggested_next_actions) {
 			lines.push(`  $ ${a.command}`);

@@ -7,7 +7,55 @@ export type OutputOptions = {
 	raw: boolean;
 	/** Quiet mode: emit minified single-line JSON for composable shell usage. */
 	quiet: boolean;
+	/**
+	 * Evidence-only mode (DESIGN §13.1): drop every suggested-fix / next-action
+	 * field so an agent that wants to reason for itself pays no tokens for
+	 * advice it will ignore. `evidence`, `token_budget`, and identity fields are
+	 * always preserved. Optional so existing option literals stay valid.
+	 */
+	evidenceOnly?: boolean;
 };
+
+/**
+ * Fix / next-action fields stripped by `--evidence-only`. Everything else —
+ * notably `evidence`, `minimal_context`, `uncertainty`, and `token_budget` —
+ * is retained so the packet remains a complete evidence record.
+ */
+const FIX_FIELDS = [
+	"fix_options",
+	"recommended_fix",
+	"recommended_next_action",
+	"recommended_action",
+	"suggested_next_actions",
+	"next",
+	"next_actions",
+	"confirming_intervention",
+	"fix_candidates",
+] as const;
+
+/**
+ * Strip suggested-fix/next-action fields from a packet, returning a shallow
+ * copy (the input is never mutated). `token_budget` is cloned so a later
+ * returned_bytes refresh cannot leak back into the caller's object.
+ */
+export function stripFixFields(data: unknown): unknown {
+	if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+	const src = data as Record<string, unknown>;
+	const out: Record<string, unknown> = { ...src };
+	let removed = false;
+	for (const field of FIX_FIELDS) {
+		if (field in out) {
+			delete out[field];
+			removed = true;
+		}
+	}
+	if (!removed) return data;
+	if (out.token_budget && typeof out.token_budget === "object") {
+		out.token_budget = { ...(out.token_budget as Record<string, unknown>) };
+	}
+	out.evidence_only = true;
+	return refreshReturnedBytes(out);
+}
 
 export function resolveOutputOptions(
 	opts: {
@@ -15,6 +63,7 @@ export function resolveOutputOptions(
 		raw?: boolean;
 		maxBytes?: number;
 		quiet?: boolean;
+		evidenceOnly?: boolean;
 	},
 	configDefault?: "json" | "text",
 	configMaxBytes?: number,
@@ -36,14 +85,19 @@ export function resolveOutputOptions(
 		raw: opts.raw ?? false,
 		maxBytes: opts.maxBytes ?? configMaxBytes,
 		quiet,
+		evidenceOnly: opts.evidenceOnly ?? false,
 	};
 }
 
 export function outputResult(
-	data: unknown,
+	rawData: unknown,
 	opts: OutputOptions,
 	textFormatter?: (d: unknown) => string,
 ): void {
+	// Evidence-only runs the fix/next-action filter BEFORE any other stage so
+	// both the quiet path and the max-bytes budget see the reduced packet.
+	const data = opts.evidenceOnly ? stripFixFields(rawData) : rawData;
+
 	// Quiet mode: minified single-line JSON, no truncation decoration.
 	if (opts.quiet) {
 		console.log(JSON.stringify(data));

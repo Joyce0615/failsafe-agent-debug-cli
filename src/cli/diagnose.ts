@@ -11,6 +11,7 @@ export function registerDiagnoseCommand(program: Command): void {
 		.option("--format <format>", "Output format: json or text")
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
+		.option("--evidence-only", "Omit suggested fixes and next actions; keep evidence only")
 		.action(async (rawId: string, opts) => {
 			const { config, store, outOpts } = initCommand(opts);
 

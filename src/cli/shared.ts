@@ -72,6 +72,7 @@ export function initCommand(opts: {
 	raw?: boolean;
 	maxBytes?: string | number;
 	quiet?: boolean;
+	evidenceOnly?: boolean;
 }): { config: FailsafeConfig; store: FailsafeStore; outOpts: OutputOptions } {
 	const config = loadConfig();
 	const store = createStore(config);
