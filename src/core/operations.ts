@@ -141,7 +141,11 @@ async function analyzeCommandImpl(
 	const allMatches = [...new Set([...stdoutMatches, ...stderrMatches])];
 
 	const parsed = await withSpan("failsafe.parse", async (setAttrs) => {
-		const p = detectAndParse(redactedStdout, redactedStderr, command);
+		// Template mining is a last resort for a command that actually failed;
+		// a passing command's output needs no structure recovery (item 27).
+		const p = detectAndParse(redactedStdout, redactedStderr, command, {
+			mineTemplates: result.exit_code !== 0,
+		});
 		setAttrs(parseSpanAttributes(p));
 		return p;
 	});

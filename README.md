@@ -193,6 +193,12 @@ Built-in parsers (8 parsers across Python, JavaScript/TypeScript):
 | JavaScript | ESLint | Rule names, locations, problem count |
 | JavaScript | Biome | Rule names, locations, error count |
 
+Plus Go, Rust, Java, Ruby, C/C++, and Mocha parsers. When a failing command's
+output matches **no** parser, a last-resort Drain-style template miner
+(`drain-template`) recovers the most failure-like log template, a `file:line`
+candidate, and a stable signature so unknown tools still produce a groupable,
+low-confidence diagnosis instead of "Unknown failure".
+
 ## Security
 
 - **Command policy**: Commands are validated against an allowlist. Shell operators (`&&`, `||`, `;`, `|`) are split and each sub-command is checked. Shell metacharacters (backticks, `$(...)`, `${...}`) are blocked.

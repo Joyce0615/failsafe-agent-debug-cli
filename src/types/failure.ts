@@ -38,6 +38,18 @@ export const ParsedErrorSchema = z.object({
 	assertion_diff: AssertionDiffSchema.optional(),
 	test_name: z.string().optional(),
 	test_file: z.string().optional(),
+	/**
+	 * Set only by the Drain-style last-resort miner (`drain-template`, item 27)
+	 * when no registered parser matched: the mined log template, how many
+	 * scanned lines matched it, and the size of the scanned window.
+	 */
+	log_template: z
+		.object({
+			template: z.string(),
+			occurrences: z.number().int(),
+			scanned_lines: z.number().int(),
+		})
+		.optional(),
 });
 export type ParsedError = z.infer<typeof ParsedErrorSchema>;
 

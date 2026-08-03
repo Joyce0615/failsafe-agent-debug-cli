@@ -30,6 +30,14 @@ import { TEMPLATES } from "./templates.js";
  */
 const FLAKY_CONFIDENCE_CEILING = 0.3;
 
+/**
+ * Confidence for a root cause recovered by Drain-style template mining
+ * (item 27) rather than by a parser or a rule. Structure was inferred from
+ * unstructured text, so this deliberately sits in the low band (< 0.6) — the
+ * agent should confirm before acting on it.
+ */
+const TEMPLATE_MINING_CONFIDENCE = 0.25;
+
 type StoreInterface = {
 	findSimilarFailures(
 		signature: FailureSignature,
@@ -202,6 +210,35 @@ export async function diagnose(
 			uncertainty = [
 				...uncertainty,
 				`Winning tier '${ruleMatch.rule_source}' (${ruleMatch.rule_id}) shadowed lower-tier match(es): ${shadowedDesc}.`,
+			];
+		}
+	}
+
+	// Step 7b: Drain-style fallback (item 27). When no registered parser matched,
+	// `detectAndParse` mined a log template from the raw output. If no rule tier
+	// produced a diagnosis either, promote that template to a templated summary
+	// plus a deliberately low-confidence root cause, and always record the
+	// template + its concrete line as evidence so the agent can see both the
+	// generalized shape and the exact text.
+	const mined = allErrors.find((e) => e.log_template);
+	if (mined?.log_template) {
+		const { template, occurrences, scanned_lines } = mined.log_template;
+		templateEvidence.push({
+			kind: "log_template",
+			location: mined.location ? `${mined.location.file}:${mined.location.line}` : undefined,
+			value: `${template} (mined from ${occurrences}/${scanned_lines} unrecognized output line(s))`,
+		});
+		templateEvidence.push({ kind: "error_message", value: mined.message });
+		if (!ruleMatch) {
+			summary = template;
+			rootCause = {
+				category: "unknown",
+				explanation: `No parser recognized this tool's output. The most failure-like log template ("${template}") matched ${occurrences} of ${scanned_lines} scanned line(s); a representative line is: ${mined.message}`,
+				confidence: TEMPLATE_MINING_CONFIDENCE,
+			};
+			uncertainty = [
+				"Diagnosis came from log-template mining, not a language/tool parser — treat the location and cause as candidates, not facts.",
+				...uncertainty.filter((u) => u !== "No specific diagnosis template matched"),
 			];
 		}
 	}

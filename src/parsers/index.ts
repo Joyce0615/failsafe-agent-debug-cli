@@ -1,6 +1,7 @@
 import type { SourceLocation } from "../types/common.js";
 import { normalizeLocation } from "../utils/paths.js";
 import { cppParser } from "./cpp.js";
+import { mineTemplateResult } from "./drain.js";
 import { collapseFramesInResults } from "./frames.js";
 import { goTestParser } from "./go.js";
 import { javaParser } from "./java.js";
@@ -36,12 +37,30 @@ const ALL_PARSERS: FailureParser[] = [
 	jsStackParser,
 ];
 
+export type DetectOptions = {
+	/**
+	 * Enable the Drain-style last-resort template miner (item 27) when NO
+	 * registered parser matched. Off by default so `detectAndParse` stays a pure
+	 * "did a known tool format match?" question; callers that know the command
+	 * actually failed (e.g. `analyzeCommand`) turn it on to recover structure
+	 * from unknown tool output.
+	 */
+	mineTemplates?: boolean;
+};
+
 /**
  * Run detection on all parsers and parse with every matching one.
  * Returns an array of ParserResult from all parsers that matched.
- * The array may be empty if no parser detected the output format.
+ * The array may be empty if no parser detected the output format — unless
+ * `opts.mineTemplates` is set, in which case a single synthetic
+ * `drain-template` result is mined from the raw output as a last resort.
  */
-export function detectAndParse(stdout: string, stderr: string, command: string): ParserResult[] {
+export function detectAndParse(
+	stdout: string,
+	stderr: string,
+	command: string,
+	opts: DetectOptions = {},
+): ParserResult[] {
 	const results: ParserResult[] = [];
 
 	for (const parser of ALL_PARSERS) {
@@ -60,7 +79,17 @@ export function detectAndParse(stdout: string, stderr: string, command: string):
 	// them, so long node_modules/traceback chains don't inflate stored evidence
 	// or raw_output_bytes. Application frames (and thus location extraction) are
 	// preserved (item 25).
-	return collapseFramesInResults(results);
+	const collapsed = collapseFramesInResults(results);
+
+	// Nothing recognized the output: mine a log template so an unknown tool
+	// still yields a summary, a location candidate, and a groupable signature
+	// instead of a bare "Unknown failure" (item 27).
+	if (collapsed.length === 0 && opts.mineTemplates) {
+		const mined = mineTemplateResult(stdout, stderr);
+		if (mined) return [mined];
+	}
+
+	return collapsed;
 }
 
 /**

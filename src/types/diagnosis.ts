@@ -29,6 +29,7 @@ export const EvidenceItemSchema = z.object({
 		"git_diff",
 		"history_match",
 		"error_message",
+		"log_template",
 	]),
 	location: z.string().optional(),
 	value: z.string(),
