@@ -41,6 +41,17 @@ export const ContextSliceSchema = z.object({
 	start_line: z.number().int(),
 	end_line: z.number().int(),
 	text: z.string(),
+	/**
+	 * Name of the enclosing declaration when the slice is a syntactic unit
+	 * rather than a line window (item 29).
+	 */
+	symbol: z.string().optional(),
+	unit_kind: z.enum(["function", "method", "class", "module", "block"]).optional(),
+	/**
+	 * Set when the enclosing unit was too large to return whole, so the slice
+	 * is a window clamped inside that unit's boundaries.
+	 */
+	truncated_unit: z.boolean().optional(),
 });
 export type ContextSlice = z.infer<typeof ContextSliceSchema>;
 

@@ -1,7 +1,37 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { SourceLocation } from "../types/common.js";
 import type { ContextSlice } from "../types/diagnosis.js";
+import { findEnclosingUnit, unitSpanFromHeader } from "./ast.js";
 
+/**
+ * Upper bound on an AST-derived slice. A 900-line god function is not a
+ * "minimal context"; past this we keep the unit's identity but return a window
+ * around the failing line, clamped to the unit's own boundaries.
+ */
+const MAX_UNIT_LINES = 120;
+
+function renderSlice(
+	file: string,
+	lines: string[],
+	startLine: number,
+	endLine: number,
+	extra: Partial<ContextSlice> = {},
+): ContextSlice {
+	const text = lines
+		.slice(startLine - 1, endLine)
+		.map((l, i) => `${startLine + i}: ${l}`)
+		.join("\n");
+	return { file, start_line: startLine, end_line: endLine, text, ...extra };
+}
+
+/**
+ * Extract the source context around a failure location.
+ *
+ * Prefers the *enclosing function/class* span (item 29) so the slice is a
+ * syntactic unit rather than an arbitrary cut; falls back to the original
+ * ±`contextLines` window when no unit can be identified (unknown language, no
+ * grammar, top-level statement).
+ */
 export async function extractSourceSlice(
 	location: SourceLocation,
 	contextLines = 5,
@@ -10,13 +40,29 @@ export async function extractSourceSlice(
 		if (!existsSync(location.file)) return null;
 		const content = readFileSync(location.file, "utf-8");
 		const lines = content.split("\n");
+
+		const unit = findEnclosingUnit(content, location.line, location.file);
+		if (unit) {
+			const unitLines = unit.end_line - unit.start_line + 1;
+			if (unitLines <= MAX_UNIT_LINES) {
+				return renderSlice(location.file, lines, unit.start_line, unit.end_line, {
+					symbol: unit.name,
+					unit_kind: unit.kind,
+				});
+			}
+			// Oversized unit: window inside it, never spilling into a neighbour.
+			const startLine = Math.max(unit.start_line, location.line - contextLines);
+			const endLine = Math.min(unit.end_line, location.line + contextLines);
+			return renderSlice(location.file, lines, startLine, endLine, {
+				symbol: unit.name,
+				unit_kind: unit.kind,
+				truncated_unit: true,
+			});
+		}
+
 		const startLine = Math.max(1, location.line - contextLines);
 		const endLine = Math.min(lines.length, location.line + contextLines);
-		const text = lines
-			.slice(startLine - 1, endLine)
-			.map((l, i) => `${startLine + i}: ${l}`)
-			.join("\n");
-		return { file: location.file, start_line: startLine, end_line: endLine, text };
+		return renderSlice(location.file, lines, startLine, endLine);
 	} catch {
 		return null;
 	}
@@ -56,30 +102,31 @@ export async function extractTestSlice(
 
 		if (startIdx < 0) return null;
 
-		// Find the end of the test function (heuristic: next function at same/lower indent, or end of file)
-		const startIndent = lines[startIdx].match(/^\s*/)?.[0].length ?? 0;
-		let endIdx = startIdx + 1;
-		for (; endIdx < lines.length; endIdx++) {
-			const line = lines[endIdx];
-			if (line.trim() === "") continue;
-			const indent = line.match(/^\s*/)?.[0].length ?? 0;
-			// If we hit a line at the same or lower indent that looks like a new definition, stop
-			if (
-				indent <= startIndent &&
-				/^\s*(def |class |it\(|test\(|describe\(|function )/.test(line)
-			) {
-				break;
+		const startLine = startIdx + 1;
+
+		// Bound the test body by its syntactic span (item 29). Only if that is
+		// unavailable do we fall back to the old indentation/next-definition
+		// heuristic, which over- or under-shoots on nested and multi-line tests.
+		let endLine = unitSpanFromHeader(content, startLine, testFile);
+		if (endLine === null) {
+			const startIndent = lines[startIdx].match(/^\s*/)?.[0].length ?? 0;
+			let endIdx = startIdx + 1;
+			for (; endIdx < lines.length; endIdx++) {
+				const line = lines[endIdx];
+				if (line.trim() === "") continue;
+				const indent = line.match(/^\s*/)?.[0].length ?? 0;
+				// A line at the same or lower indent that starts a new definition ends the test.
+				if (
+					indent <= startIndent &&
+					/^\s*(def |class |it\(|test\(|describe\(|function )/.test(line)
+				) {
+					break;
+				}
 			}
+			endLine = endIdx;
 		}
 
-		const startLine = startIdx + 1;
-		const endLine = endIdx;
-		const text = lines
-			.slice(startIdx, endIdx)
-			.map((l, i) => `${startLine + i}: ${l}`)
-			.join("\n");
-
-		return { file: testFile, start_line: startLine, end_line: endLine, text };
+		return renderSlice(testFile, lines, startLine, endLine);
 	} catch {
 		return null;
 	}
