@@ -20,6 +20,7 @@ import { diagnosisId } from "../utils/id.js";
 import { computeTokenBudget } from "../utils/tokens.js";
 import { diagnosisCacheKey } from "./cache.js";
 import { extractRecentDiff, extractSourceSlice, extractTestSlice } from "./context.js";
+import { buildConfirmingIntervention } from "./intervention.js";
 import { TEMPLATES } from "./templates.js";
 
 /**
@@ -112,6 +113,24 @@ export async function diagnose(
 				}
 			: undefined;
 
+	/**
+	 * Attach the confirming probe (item 31). Computed outside the cache because
+	 * its command embeds THIS failure's id: a cached packet re-stamped for a new
+	 * failure would otherwise carry a stale `failsafe debug <old-id>`.
+	 */
+	const withIntervention = (packet: FailureDiagnosis): FailureDiagnosis => {
+		const intervention = buildConfirmingIntervention({
+			failureId: failure.failure_id,
+			command: failure.command,
+			errors: allErrors,
+			primaryLocation,
+			confidence: packet.root_cause?.confidence,
+			flaky: packet.severity === "flaky",
+		});
+		if (intervention) packet.confirming_intervention = intervention;
+		return packet;
+	};
+
 	if (!isFlaky) {
 		const cached = store.getCachedDiagnosis?.(cacheKey);
 		if (cached) {
@@ -120,8 +139,10 @@ export async function diagnose(
 			// loop_warning so a stale cache entry never hides a fresh loop signal.
 			// Cached packets are stored loop_warning-free, so only add it here.
 			const packet: FailureDiagnosis = { ...cached, failure_id: failure.failure_id };
+			// Never inherit a probe aimed at a previous failure's id.
+			packet.confirming_intervention = undefined;
 			if (loopWarning) packet.loop_warning = loopWarning;
-			return packet;
+			return withIntervention(packet);
 		}
 	}
 
@@ -303,9 +324,13 @@ export async function diagnose(
 	if (!isFlaky) {
 		store.saveCachedDiagnosis?.(cacheKey, diagnosis);
 	}
-	if (loopWarning) diagnosis.loop_warning = loopWarning;
 
-	return diagnosis;
+	// Decorate a COPY: `loop_warning` is time-varying and the intervention
+	// embeds this failure's id, so neither may leak into the cached entry —
+	// including for an in-memory store that keeps the object by reference.
+	const packet: FailureDiagnosis = { ...diagnosis };
+	if (loopWarning) packet.loop_warning = loopWarning;
+	return withIntervention(packet);
 }
 
 function computeSimpleSignature(

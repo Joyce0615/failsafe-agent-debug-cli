@@ -58,6 +58,29 @@ export type ContextSlice = z.infer<typeof ContextSliceSchema>;
 export const SeveritySchema = z.enum(["blocker", "error", "warning", "flaky"]);
 export type Severity = z.infer<typeof SeveritySchema>;
 
+/**
+ * The cheapest active probe that would confirm or refute a low-confidence root
+ * cause before any code is patched (item 31; DESIGN §5.4 Observability Gap).
+ */
+export const ConfirmingInterventionSchema = z.object({
+	kind: z.enum(["debugger_breakpoint", "assertion_probe"]),
+	/** Why confirmation is warranted, naming the confidence and the location. */
+	reason: z.string(),
+	/** The confidence that triggered the intervention. */
+	confidence: z.number().min(0).max(1),
+	/** Ready-to-run probe command. */
+	command: z.string(),
+	/** `file:line` the probe observes. */
+	location: z.string(),
+	/** Concrete expressions to inspect at that location. */
+	watch: z.array(z.string()),
+	/** What the agent should conclude from what it sees. */
+	expected_observation: z.string(),
+	/** Human-readable cost of running the probe. */
+	cost: z.string(),
+});
+export type ConfirmingIntervention = z.infer<typeof ConfirmingInterventionSchema>;
+
 export const FailureDiagnosisSchema = z.object({
 	schema_version: z.literal(SCHEMA_VERSION),
 	diagnosis_id: z.string(),
@@ -102,5 +125,10 @@ export const FailureDiagnosisSchema = z.object({
 			recommendation: z.string(),
 		})
 		.optional(),
+	/**
+	 * Attached when the root cause is not confident enough to act on: one
+	 * specific probe that validates the hypothesis at runtime (item 31).
+	 */
+	confirming_intervention: ConfirmingInterventionSchema.optional(),
 });
 export type FailureDiagnosis = z.infer<typeof FailureDiagnosisSchema>;
