@@ -134,6 +134,15 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces failsafe run "pytest
 
 Spans emitted: `failsafe.run`, `failsafe.parse`, `failsafe.diagnose`, `failsafe.repro`, `failsafe.verify`. Attributes (prefixed `failsafe.`) include failure type, severity, root-cause category and confidence, parser matched, rule source, exit code, raw output bytes, and compression ratio. When the endpoint is unset there is zero overhead — the SDK is never loaded.
 
+To line the spans up with agent-observability backends (Arize Phoenix, Langfuse), opt into the OpenTelemetry **GenAI** semantic conventions:
+
+```bash
+OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces failsafe diagnose last
+```
+
+Each span then also carries `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name` (`failsafe_analyze`/`_parse`/`_diagnose`/`_repro`/`_verify`), `gen_ai.tool.type=function`, and — where a token budget exists — `gen_ai.usage.input_tokens` (what the raw output would have cost) and `gen_ai.usage.output_tokens` (what the compact packet costs). The `failsafe.*` set is unchanged; nothing `gen_ai.*` is emitted without the opt-in.
+
 Example `.failsafe/rules.yaml`:
 
 ```yaml

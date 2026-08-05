@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+	GEN_AI_OPT_IN,
 	diagnoseSpanAttributes,
+	genAiToolAttributes,
+	isGenAiSemconvEnabled,
 	parseSpanAttributes,
 	reproSpanAttributes,
 	runErrorSpanAttributes,
@@ -8,15 +11,22 @@ import {
 	verifyErrorSpanAttributes,
 	verifySpanAttributes,
 } from "../../src/telemetry/attributes.js";
-import { isTelemetryEnabled, shutdownTelemetry, withSpan } from "../../src/telemetry/otel.js";
+import {
+	isTelemetryEnabled,
+	shutdownTelemetry,
+	spanAttributeKey,
+	withSpan,
+} from "../../src/telemetry/otel.js";
 import { SCHEMA_VERSION } from "../../src/types/common.js";
 import type { FailureDiagnosis } from "../../src/types/diagnosis.js";
 import type { ReproRecord } from "../../src/types/repro.js";
 
 const ENDPOINT_VAR = "OTEL_EXPORTER_OTLP_ENDPOINT";
+const SEMCONV_VAR = "OTEL_SEMCONV_STABILITY_OPT_IN";
 
 afterEach(async () => {
 	delete process.env[ENDPOINT_VAR];
+	delete process.env[SEMCONV_VAR];
 	await shutdownTelemetry(200);
 });
 
@@ -198,6 +208,122 @@ describe("canonical span attributes", () => {
 		const errAttrs = verifyErrorSpanAttributes({ exit_code: 2 });
 		expect(errAttrs.status).toBe("error");
 		expect(errAttrs.error_code).toBe(2);
+	});
+});
+
+// ─── OpenTelemetry GenAI semantic conventions (item 30) ────────────────────
+//
+// Opt-in only, per the spec's stability-transition guidance: the gen_ai.* keys
+// appear if and only if OTEL_SEMCONV_STABILITY_OPT_IN lists
+// gen_ai_latest_experimental. The proprietary failsafe.* set is unaffected.
+
+describe("GenAI semantic-convention attributes", () => {
+	const enable = (value = GEN_AI_OPT_IN) => {
+		process.env[SEMCONV_VAR] = value;
+	};
+
+	test("the opt-in gate parses a comma-separated list", () => {
+		expect(isGenAiSemconvEnabled()).toBe(false);
+		enable("http,database");
+		expect(isGenAiSemconvEnabled()).toBe(false);
+		enable(`http, ${GEN_AI_OPT_IN} ,database`);
+		expect(isGenAiSemconvEnabled()).toBe(true);
+	});
+
+	test("no gen_ai attribute is emitted without the opt-in", () => {
+		const builders = [
+			runSpanAttributes({ status: "failed", token_budget: { estimated_raw_tokens: 500 } }),
+			runErrorSpanAttributes({ exit_code: 3 }),
+			parseSpanAttributes([]),
+			diagnoseSpanAttributes(makeDiagnosis()),
+			reproSpanAttributes(makeRepro()),
+			verifySpanAttributes({ status: "passed" }),
+			verifyErrorSpanAttributes({ exit_code: 2 }),
+		];
+		for (const attrs of builders) {
+			expect(Object.keys(attrs).some((k) => k.startsWith("gen_ai."))).toBe(false);
+		}
+		expect(genAiToolAttributes("diagnose")).toEqual({});
+	});
+
+	test("with the opt-in, every span becomes a GenAI tool span", () => {
+		enable();
+		const cases: Array<[Record<string, unknown>, string]> = [
+			[runSpanAttributes({ status: "failed" }), "failsafe_analyze"],
+			[runErrorSpanAttributes({ exit_code: 3 }), "failsafe_analyze"],
+			[parseSpanAttributes([]), "failsafe_parse"],
+			[diagnoseSpanAttributes(makeDiagnosis()), "failsafe_diagnose"],
+			[reproSpanAttributes(makeRepro()), "failsafe_repro"],
+			[verifySpanAttributes({ status: "passed" }), "failsafe_verify"],
+			[verifyErrorSpanAttributes({ exit_code: 2 }), "failsafe_verify"],
+		];
+		for (const [attrs, toolName] of cases) {
+			expect(attrs["gen_ai.operation.name"]).toBe("execute_tool");
+			expect(attrs["gen_ai.tool.name"]).toBe(toolName);
+			expect(attrs["gen_ai.tool.type"]).toBe("function");
+		}
+	});
+
+	test("the failsafe.* attribute set is unchanged by the opt-in", () => {
+		const before = runSpanAttributes({ status: "failed", failure_type: "test_failure" });
+		enable();
+		const after = runSpanAttributes({ status: "failed", failure_type: "test_failure" });
+		for (const [key, value] of Object.entries(before)) {
+			expect(after[key]).toBe(value as never);
+		}
+		expect(after.schema_version).toBe(SCHEMA_VERSION);
+	});
+
+	test("token budget maps onto gen_ai.usage.*", () => {
+		enable();
+		const attrs = runSpanAttributes({
+			status: "failed",
+			token_budget: {
+				raw_output_bytes: 40_000,
+				compression_ratio: 20,
+				estimated_raw_tokens: 10_000,
+				estimated_returned_tokens: 500,
+			},
+		});
+		expect(attrs["gen_ai.usage.input_tokens"]).toBe(10_000);
+		expect(attrs["gen_ai.usage.output_tokens"]).toBe(500);
+
+		const diagnosis = makeDiagnosis();
+		diagnosis.token_budget = {
+			raw_output_bytes: 8000,
+			returned_bytes: 800,
+			compression_ratio: 10,
+			estimated_raw_tokens: 2000,
+			estimated_returned_tokens: 200,
+		};
+		const diagAttrs = diagnoseSpanAttributes(diagnosis);
+		expect(diagAttrs["gen_ai.usage.input_tokens"]).toBe(2000);
+		expect(diagAttrs["gen_ai.usage.output_tokens"]).toBe(200);
+	});
+
+	test("usage keys are omitted when there is no token budget to map", () => {
+		enable();
+		const attrs = parseSpanAttributes([]);
+		expect(attrs["gen_ai.tool.name"]).toBe("failsafe_parse");
+		expect(attrs["gen_ai.usage.input_tokens"]).toBeUndefined();
+		expect(attrs["gen_ai.usage.output_tokens"]).toBeUndefined();
+	});
+
+	test("gen_ai keys reach the wire un-prefixed; bare keys stay under failsafe.*", () => {
+		expect(spanAttributeKey("gen_ai.tool.name")).toBe("gen_ai.tool.name");
+		expect(spanAttributeKey("gen_ai.usage.input_tokens")).toBe("gen_ai.usage.input_tokens");
+		expect(spanAttributeKey("failure_type")).toBe("failsafe.failure_type");
+		expect(spanAttributeKey("schema_version")).toBe("failsafe.schema_version");
+	});
+
+	test("a span still emits successfully with the opt-in enabled", async () => {
+		enable();
+		process.env[ENDPOINT_VAR] = "http://localhost:4318/v1/traces";
+		const result = await withSpan("failsafe.diagnose", async (setAttrs) => {
+			setAttrs(diagnoseSpanAttributes(makeDiagnosis()));
+			return "done";
+		});
+		expect(result).toBe("done");
 	});
 });
 

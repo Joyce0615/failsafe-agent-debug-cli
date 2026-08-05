@@ -98,10 +98,22 @@ export async function withSpan<T>(
 	});
 }
 
+/**
+ * Set span attributes, dropping `undefined` values.
+ *
+ * Bare keys are namespaced under `failsafe.*`. A key that already contains a
+ * `.` is treated as fully qualified and emitted verbatim, which is how the
+ * OpenTelemetry GenAI semantic-convention attributes (`gen_ai.*`, item 30)
+ * reach the wire without being double-namespaced.
+ */
+export function spanAttributeKey(key: string): string {
+	return key.includes(".") ? key : `failsafe.${key}`;
+}
+
 function applyAttributes(span: Span, attrs: SpanAttributes): void {
 	for (const [key, value] of Object.entries(attrs)) {
 		if (value !== undefined) {
-			span.setAttribute(`failsafe.${key}`, value);
+			span.setAttribute(spanAttributeKey(key), value);
 		}
 	}
 }
