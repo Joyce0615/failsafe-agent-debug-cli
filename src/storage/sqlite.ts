@@ -628,18 +628,31 @@ export class FailsafeSqlite {
 		this.db.run(
 			`INSERT INTO flaky_signatures (
 				signature_hash, failure_count_after_fix,
-				first_recurrence_at, last_recurrence_at, marked_flaky_at
-			) VALUES (?, ?, ?, ?, ?)
+				first_recurrence_at, last_recurrence_at, marked_flaky_at,
+				rerun_checked_at, rerun_total, rerun_passed, rerun_failed, rerun_confirmed
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(signature_hash) DO UPDATE SET
 				failure_count_after_fix = excluded.failure_count_after_fix,
 				last_recurrence_at = excluded.last_recurrence_at,
-				marked_flaky_at = COALESCE(excluded.marked_flaky_at, flaky_signatures.marked_flaky_at)`,
+				marked_flaky_at = COALESCE(excluded.marked_flaky_at, flaky_signatures.marked_flaky_at),
+				-- Rerun evidence is only overwritten by a NEW rerun, so a plain
+				-- recurrence upsert can never erase a confirmed/refuted verdict.
+				rerun_checked_at = COALESCE(excluded.rerun_checked_at, flaky_signatures.rerun_checked_at),
+				rerun_total = COALESCE(excluded.rerun_total, flaky_signatures.rerun_total),
+				rerun_passed = COALESCE(excluded.rerun_passed, flaky_signatures.rerun_passed),
+				rerun_failed = COALESCE(excluded.rerun_failed, flaky_signatures.rerun_failed),
+				rerun_confirmed = COALESCE(excluded.rerun_confirmed, flaky_signatures.rerun_confirmed)`,
 			[
 				record.signature_hash,
 				record.failure_count_after_fix,
 				record.first_recurrence_at,
 				record.last_recurrence_at,
 				record.marked_flaky_at ?? null,
+				record.rerun_checked_at ?? null,
+				record.rerun_total ?? null,
+				record.rerun_passed ?? null,
+				record.rerun_failed ?? null,
+				record.rerun_confirmed == null ? null : record.rerun_confirmed ? 1 : 0,
 			],
 		);
 	}
@@ -898,6 +911,12 @@ export class FailsafeSqlite {
 			first_recurrence_at: row.first_recurrence_at,
 			last_recurrence_at: row.last_recurrence_at,
 			marked_flaky_at: row.marked_flaky_at ?? undefined,
+			rerun_checked_at: row.rerun_checked_at ?? undefined,
+			rerun_total: row.rerun_total ?? undefined,
+			rerun_passed: row.rerun_passed ?? undefined,
+			rerun_failed: row.rerun_failed ?? undefined,
+			// SQLite has no boolean: null means "never rerun", 0/1 the verdict.
+			rerun_confirmed: row.rerun_confirmed == null ? undefined : row.rerun_confirmed === 1,
 		};
 	}
 
@@ -1061,6 +1080,11 @@ interface FlakyRow {
 	first_recurrence_at: string;
 	last_recurrence_at: string;
 	marked_flaky_at: string | null;
+	rerun_checked_at: string | null;
+	rerun_total: number | null;
+	rerun_passed: number | null;
+	rerun_failed: number | null;
+	rerun_confirmed: number | null;
 }
 
 // --------------- Helpers ---------------

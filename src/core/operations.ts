@@ -21,6 +21,7 @@ import {
 import { generateRepro } from "../repro/engine.js";
 import { computeSignature } from "../repro/signatures.js";
 import { loadDeclaredRules } from "../rules/declared.js";
+import { confirmFlakyByRerun } from "../rules/flaky.js";
 import { computeSignatureHash } from "../rules/learned.js";
 import { loadPolicy, parseToArgv, validateCommand } from "../security/policy.js";
 import { redactSecrets } from "../security/redaction.js";
@@ -289,7 +290,7 @@ export async function verifyFailure(
 	rawId: string,
 	store: FailsafeStore,
 	config: FailsafeConfig,
-	opts: { timeoutMs?: number } = {},
+	opts: { timeoutMs?: number; flakyCheckRuns?: number } = {},
 ): Promise<CoreResult<Record<string, unknown>>> {
 	return withSpan("failsafe.verify", async (setAttrs) => {
 		const result = await verifyFailureImpl(rawId, store, config, opts);
@@ -306,7 +307,7 @@ async function verifyFailureImpl(
 	rawId: string,
 	store: FailsafeStore,
 	config: FailsafeConfig,
-	opts: { timeoutMs?: number } = {},
+	opts: { timeoutMs?: number; flakyCheckRuns?: number } = {},
 ): Promise<CoreResult<Record<string, unknown>>> {
 	const fid = resolveId(rawId, store);
 	if (!fid) return notFound(rawId);
@@ -398,6 +399,35 @@ async function verifyFailureImpl(
 	// agent rediscover the same dead end.
 	const attempt = await recordVerifyAttempt(failure, allErrors, checks, allPassed, store);
 	if (attempt) data.recorded_attempt = attempt;
+
+	// Rerun-based flaky confirmation (item 33): opt-in, and only meaningful for
+	// a command we can actually re-execute.
+	if (opts.flakyCheckRuns && opts.flakyCheckRuns > 0) {
+		const probeCommand = repro?.status === "verified" ? repro.command : failure.command;
+		const validation = validateCommand(probeCommand, policy);
+		if (!validation.allowed) {
+			data.flaky_check = {
+				error: true,
+				message: `Flaky check skipped: command blocked by policy (${validation.reason})`,
+			};
+		} else {
+			const parsedArgv = parseToArgv(probeCommand);
+			const result = await confirmFlakyByRerun(
+				store,
+				computeSignatureHash(allErrors, failure.primary_location),
+				opts.flakyCheckRuns,
+				async () => {
+					const res = await runCommand(probeCommand, {
+						cwd: failure.cwd,
+						timeout_ms: timeoutMs,
+						argv: parsedArgv.kind === "argv" ? parsedArgv.argv : undefined,
+					});
+					return { passed: res.exit_code === 0, duration_ms: res.duration_ms };
+				},
+			);
+			data.flaky_check = { command: probeCommand, ...result };
+		}
+	}
 
 	return { ok: true, data };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { diagnose } from "../../src/diagnosis/engine.js";
-import { type FlakyStore, checkFlaky } from "../../src/rules/flaky.js";
+import { type FlakyStore, checkFlaky, confirmFlakyByRerun } from "../../src/rules/flaky.js";
 import type { FlakyRecord, LearnedRule } from "../../src/rules/types.js";
 import { SCHEMA_VERSION } from "../../src/types/common.js";
 import type { FailureRecord } from "../../src/types/failure.js";
@@ -75,6 +75,113 @@ describe("checkFlaky threshold semantics", () => {
 		// last_recurrence_at and count are refreshed.
 		expect(upserts[0].failure_count_after_fix).toBe(4);
 		expect(upserts[0].last_recurrence_at).not.toBe(existing.last_recurrence_at);
+	});
+});
+
+// ─── Rerun-based confirmation (item 33) ──────────────────────────────────────
+//
+// History alone only *infers* flakiness. Actually re-running the minimal repro
+// N times and looking for a verdict change is the empirical definition
+// (pytest-rerunfailures / CANNIER), and that evidence overrides the heuristic
+// in BOTH directions.
+
+/** A store whose flaky record is mutated by upserts, like the real one. */
+function makeEvidenceStore(initial: FlakyRecord | null = null): {
+	store: FlakyStore;
+	current: () => FlakyRecord | null;
+} {
+	let record = initial;
+	const store: FlakyStore = {
+		getLatestSuccessfulFix: () => ({ resolved_at: "2026-01-01" }),
+		countUnresolvedAfterDate: () => 99, // heuristic would scream "flaky"
+		getFlakySignature: () => record,
+		upsertFlakySignature: (r) => {
+			record = r;
+		},
+		listFlakySignatures: () => (record ? [record] : []),
+	};
+	return { store, current: () => record };
+}
+
+describe("confirmFlakyByRerun", () => {
+	test("alternating pass/fail across reruns confirms flakiness", async () => {
+		const { store, current } = makeEvidenceStore();
+		const result = await confirmFlakyByRerun(store, "sig", 4, async (attempt) => ({
+			passed: attempt % 2 === 0,
+		}));
+		expect(result.verdict).toBe("flaky");
+		expect(result.confirmed_flaky).toBe(true);
+		expect(result.runs).toBe(4);
+		expect(result.passed).toBe(2);
+		expect(result.failed).toBe(2);
+		expect(result.note).toContain("confirmed flaky");
+
+		const record = current()!;
+		expect(record.rerun_confirmed).toBe(true);
+		expect(record.rerun_total).toBe(4);
+		expect(record.marked_flaky_at).toBeDefined();
+	});
+
+	test("a consistently failing repro is refuted, not confirmed", async () => {
+		const { store, current } = makeEvidenceStore();
+		const result = await confirmFlakyByRerun(store, "sig", 5, async () => ({ passed: false }));
+		expect(result.verdict).toBe("deterministic_failure");
+		expect(result.confirmed_flaky).toBe(false);
+		expect(result.failed).toBe(5);
+		expect(result.note).toContain("NOT flaky");
+		expect(current()!.rerun_confirmed).toBe(false);
+	});
+
+	test("a consistently passing repro records counts without asserting a verdict", async () => {
+		const { store, current } = makeEvidenceStore();
+		const result = await confirmFlakyByRerun(store, "sig", 3, async () => ({ passed: true }));
+		expect(result.verdict).toBe("deterministic_pass");
+		expect(result.confirmed_flaky).toBe(false);
+		expect(result.note).toContain("no longer reproduces");
+		// Ambiguous between "fix worked" and "flaky pass": no verdict stored.
+		expect(current()!.rerun_confirmed).toBeUndefined();
+		expect(current()!.rerun_passed).toBe(3);
+	});
+
+	test("runs is clamped to at least one execution", async () => {
+		const { store } = makeEvidenceStore();
+		let calls = 0;
+		const result = await confirmFlakyByRerun(store, "sig", 0, async () => {
+			calls++;
+			return { passed: false };
+		});
+		expect(calls).toBe(1);
+		expect(result.runs).toBe(1);
+	});
+});
+
+describe("checkFlaky prefers rerun evidence over history", () => {
+	const base = {
+		signature_hash: "sig",
+		failure_count_after_fix: 99,
+		first_recurrence_at: "2026-01-01T00:00:00.000Z",
+		last_recurrence_at: "2026-01-02T00:00:00.000Z",
+	};
+
+	test("a refuted signature is NOT flaky despite many recurrences", () => {
+		const { store } = makeEvidenceStore({ ...base, rerun_confirmed: false, rerun_total: 5 });
+		expect(checkFlaky(store, "sig", 3)).toBe(false);
+	});
+
+	test("a confirmed signature IS flaky even with no prior successful fix", () => {
+		const store: FlakyStore = {
+			getLatestSuccessfulFix: () => null, // heuristic would say "cannot be flaky"
+			countUnresolvedAfterDate: () => 0,
+			getFlakySignature: () => ({ ...base, rerun_confirmed: true, rerun_total: 4 }),
+			upsertFlakySignature: () => {},
+			listFlakySignatures: () => [],
+		};
+		expect(checkFlaky(store, "sig", 3)).toBe(true);
+	});
+
+	test("with no rerun evidence the history heuristic still applies", () => {
+		const { store } = makeEvidenceStore({ ...base });
+		expect(checkFlaky(store, "sig", 3)).toBe(true);
 	});
 });
 

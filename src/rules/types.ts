@@ -163,6 +163,19 @@ export const FlakyRecordSchema = z.object({
 	first_recurrence_at: z.string(),
 	last_recurrence_at: z.string(),
 	marked_flaky_at: z.string().optional(),
+	/**
+	 * Rerun evidence (item 33). History alone only *infers* flakiness; these
+	 * fields record an actual N-times rerun of the minimal repro and its
+	 * verdict mix. `rerun_confirmed` is authoritative over the heuristic:
+	 * `true` = mixed verdicts observed (genuinely flaky),
+	 * `false` = every rerun agreed (deterministic — do NOT downgrade it),
+	 * absent = never rerun.
+	 */
+	rerun_checked_at: z.string().optional(),
+	rerun_total: z.number().int().optional(),
+	rerun_passed: z.number().int().optional(),
+	rerun_failed: z.number().int().optional(),
+	rerun_confirmed: z.boolean().optional(),
 });
 export type FlakyRecord = z.infer<typeof FlakyRecordSchema>;
 

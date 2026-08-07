@@ -225,6 +225,17 @@ export const MIGRATIONS: Migration[] = [
 				ON fix_attempts(signature_hash, failure_id, summary);
 		`,
 	},
+	{
+		version: 7,
+		name: "flaky_rerun_evidence",
+		up: `
+			ALTER TABLE flaky_signatures ADD COLUMN rerun_checked_at TEXT;
+			ALTER TABLE flaky_signatures ADD COLUMN rerun_total INTEGER;
+			ALTER TABLE flaky_signatures ADD COLUMN rerun_passed INTEGER;
+			ALTER TABLE flaky_signatures ADD COLUMN rerun_failed INTEGER;
+			ALTER TABLE flaky_signatures ADD COLUMN rerun_confirmed INTEGER;
+		`,
+	},
 ];
 
 export function runMigrations(db: Database): void {

@@ -12,10 +12,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { diagnose } from "../../src/diagnosis/engine.js";
-import { FailsafeStore } from "../../src/storage/store.js";
 import type { FixAttempt, LearnedRule } from "../../src/rules/types.js";
-import { DEFAULT_CONFIG } from "../../src/types/config.js";
+import { FailsafeStore } from "../../src/storage/store.js";
 import { SCHEMA_VERSION } from "../../src/types/common.js";
+import { DEFAULT_CONFIG } from "../../src/types/config.js";
 import type { FailureDiagnosis } from "../../src/types/diagnosis.js";
 import type { FailureRecord } from "../../src/types/failure.js";
 
@@ -84,10 +84,7 @@ function attempt(summary: string, outcome: FixAttempt["outcome"] = "unresolved")
 
 describe("diagnose surfaces disproven fixes", () => {
 	test("two failed attempts are listed in uncertainty", async () => {
-		const { store } = makeStore([
-			attempt("edited app/widget.py"),
-			attempt("edited app/config.py"),
-		]);
+		const { store } = makeStore([attempt("edited app/widget.py"), attempt("edited app/config.py")]);
 		const diagnosis = await diagnose(makeFailure(), store);
 		const tried = diagnosis.uncertainty.filter((u) => u.startsWith("Already tried"));
 		expect(tried.length).toBe(2);
