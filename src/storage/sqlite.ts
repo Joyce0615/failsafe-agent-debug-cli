@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import type { LearnedRule } from "../rules/types.js";
-import type { FixOutcome, FlakyRecord } from "../rules/types.js";
+import type { FixAttempt, FixOutcome, FlakyRecord } from "../rules/types.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 import type { DebugSession } from "../types/debug.js";
 import type { FailureDiagnosis } from "../types/diagnosis.js";
@@ -566,6 +566,62 @@ export class FailsafeSqlite {
 		return rows.map((row) => this.rowToFixOutcome(row));
 	}
 
+	// --------------- Fix Attempts (item 32) ---------------
+
+	/**
+	 * Record an attempted fix. Idempotent per
+	 * (signature_hash, failure_id, summary) so re-running `verify` after the
+	 * same edit does not inflate the attempt history.
+	 */
+	recordFixAttempt(attempt: FixAttempt): void {
+		this.db.run(
+			`INSERT OR IGNORE INTO fix_attempts (
+				signature_hash, failure_id, attempted_at, summary, outcome, detail, files_changed
+			) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			[
+				attempt.signature_hash,
+				attempt.failure_id,
+				attempt.attempted_at,
+				attempt.summary,
+				attempt.outcome,
+				attempt.detail ?? null,
+				attempt.files_changed ? JSON.stringify(attempt.files_changed) : null,
+			],
+		);
+	}
+
+	/** Attempts for a signature, newest first. */
+	getFixAttempts(signatureHash: string, limit = 20): FixAttempt[] {
+		const rows = this.db
+			.query(
+				"SELECT * FROM fix_attempts WHERE signature_hash = ? ORDER BY attempted_at DESC, id DESC LIMIT ?",
+			)
+			.all(signatureHash, limit) as FixAttemptRow[];
+		return rows.map((row) => this.rowToFixAttempt(row));
+	}
+
+	/** How many distinct attempts for this signature failed to resolve it. */
+	countFailedFixAttempts(signatureHash: string): number {
+		const row = this.db
+			.query(
+				"SELECT COUNT(*) as cnt FROM fix_attempts WHERE signature_hash = ? AND outcome = 'unresolved'",
+			)
+			.get(signatureHash) as { cnt: number } | null;
+		return row?.cnt ?? 0;
+	}
+
+	private rowToFixAttempt(row: FixAttemptRow): FixAttempt {
+		return {
+			signature_hash: row.signature_hash,
+			failure_id: row.failure_id,
+			attempted_at: row.attempted_at,
+			summary: row.summary,
+			outcome: row.outcome === "resolved" ? "resolved" : "unresolved",
+			detail: row.detail ?? undefined,
+			files_changed: row.files_changed ? safeJsonParse<string[]>(row.files_changed, []) : undefined,
+		};
+	}
+
 	// --------------- Flaky Signatures ---------------
 
 	upsertFlakySignature(record: FlakyRecord): void {
@@ -985,6 +1041,17 @@ interface FixOutcomeRow {
 	success: number;
 	fix_summary: string | null;
 	fix_commands: string | null;
+	files_changed: string | null;
+}
+
+interface FixAttemptRow {
+	id: number;
+	signature_hash: string;
+	failure_id: string;
+	attempted_at: string;
+	summary: string;
+	outcome: string;
+	detail: string | null;
 	files_changed: string | null;
 }
 

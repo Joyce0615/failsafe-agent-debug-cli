@@ -9,6 +9,7 @@ import {
 	reproFailure,
 	verifyFailure,
 } from "../../src/core/operations.js";
+import { computeSignatureHash } from "../../src/rules/learned.js";
 import { FailsafeStore } from "../../src/storage/store.js";
 import { DEFAULT_CONFIG } from "../../src/types/config.js";
 
@@ -147,6 +148,37 @@ describe("verifyFailure", () => {
 			expect(verify.data.status).toBe("failed");
 		}
 	}, 30_000);
+
+	test("a failed verification records a disproven fix attempt (item 32)", async () => {
+		const run = await analyzeCommand('node -e "process.exit(3)"', config, store);
+		if (!run.ok) throw new Error("setup failed");
+		const id = run.data.failure_id as string;
+		const failure = store.getFailure(id);
+		if (!failure) throw new Error("failure not stored");
+		const signatureHash = computeSignatureHash(
+			failure.parsed.flatMap((p) => p.errors),
+			failure.primary_location,
+		);
+		expect(store.countFailedFixAttempts(signatureHash)).toBe(0);
+
+		const verify = await verifyFailure(id, store, config);
+		expect(verify.ok).toBe(true);
+		if (!verify.ok) return;
+		expect(verify.data.status).toBe("failed");
+
+		const recorded = verify.data.recorded_attempt as { summary: string; outcome: string };
+		expect(recorded.outcome).toBe("unresolved");
+		expect(recorded.summary.length).toBeGreaterThan(0);
+
+		const attempts = store.getFixAttempts(signatureHash);
+		expect(attempts.length).toBe(1);
+		expect(attempts[0].outcome).toBe("unresolved");
+		expect(attempts[0].detail).toContain("still fails");
+
+		// Re-verifying the same unchanged tree does not inflate the history.
+		await verifyFailure(id, store, config);
+		expect(store.getFixAttempts(signatureHash).length).toBe(1);
+	}, 60_000);
 });
 
 describe("explainFailure", () => {

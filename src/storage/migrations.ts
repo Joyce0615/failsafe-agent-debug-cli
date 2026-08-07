@@ -203,6 +203,28 @@ export const MIGRATIONS: Migration[] = [
 				ON learned_rules(normalized_hash);
 		`,
 	},
+	{
+		version: 6,
+		name: "fix_attempts",
+		up: `
+			CREATE TABLE IF NOT EXISTS fix_attempts (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				signature_hash TEXT NOT NULL,
+				failure_id TEXT NOT NULL,
+				attempted_at TEXT NOT NULL,
+				summary TEXT NOT NULL,
+				outcome TEXT NOT NULL CHECK (outcome IN ('unresolved', 'resolved')),
+				detail TEXT,
+				files_changed TEXT
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_fix_attempts_signature
+				ON fix_attempts(signature_hash, attempted_at DESC);
+
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_fix_attempts_unique
+				ON fix_attempts(signature_hash, failure_id, summary);
+		`,
+	},
 ];
 
 export function runMigrations(db: Database): void {

@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import type { LearnedRule } from "../rules/types.js";
-import type { FixOutcome, FlakyRecord } from "../rules/types.js";
+import type { FixAttempt, FixOutcome, FlakyRecord } from "../rules/types.js";
 import type { FailsafeConfig } from "../types/config.js";
 import { resolveConfigPaths } from "../types/config.js";
 import type { DebugSession } from "../types/debug.js";
@@ -258,6 +258,30 @@ export class FailsafeStore {
 	 */
 	getLatestSuccessfulFix(signatureHash: string): FixOutcome | null {
 		return this.sqlite.getLatestSuccessfulFix(signatureHash);
+	}
+
+	// --------------- Fix Attempts (item 32) ---------------
+
+	/**
+	 * Records an attempted fix and its outcome. Idempotent per
+	 * (signature, failure, summary).
+	 */
+	recordFixAttempt(attempt: FixAttempt): void {
+		this.sqlite.recordFixAttempt(attempt);
+	}
+
+	/**
+	 * Attempts recorded for a signature, newest first.
+	 */
+	getFixAttempts(signatureHash: string, limit?: number): FixAttempt[] {
+		return this.sqlite.getFixAttempts(signatureHash, limit);
+	}
+
+	/**
+	 * Number of recorded attempts that did NOT resolve the signature.
+	 */
+	countFailedFixAttempts(signatureHash: string): number {
+		return this.sqlite.countFailedFixAttempts(signatureHash);
 	}
 
 	// --------------- Flaky Signatures ---------------

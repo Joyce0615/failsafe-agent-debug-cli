@@ -132,6 +132,29 @@ export const FixOutcomeSchema = z.object({
 });
 export type FixOutcome = z.infer<typeof FixOutcomeSchema>;
 
+// ---------- Fix Attempt (Reflexion-style episodic memory) ----------
+
+/**
+ * A recorded attempt to fix a signature and what it achieved (item 32).
+ *
+ * `FixOutcome` records only *successful* resolutions, so a re-diagnosis could
+ * not tell an agent which fixes are already disproven. A `FixAttempt` captures
+ * the failed episodes too, which is exactly Reflexion's contribution: remember
+ * the dead ends so they are not retried.
+ */
+export const FixAttemptSchema = z.object({
+	signature_hash: z.string(),
+	failure_id: z.string(),
+	attempted_at: z.string(),
+	/** Compact description of what was changed/tried. */
+	summary: z.string(),
+	outcome: z.enum(["unresolved", "resolved"]),
+	/** Why it did not resolve (e.g. which check still failed). */
+	detail: z.string().optional(),
+	files_changed: z.array(z.string()).optional(),
+});
+export type FixAttempt = z.infer<typeof FixAttemptSchema>;
+
 // ---------- Flaky Record ----------
 
 export const FlakyRecordSchema = z.object({

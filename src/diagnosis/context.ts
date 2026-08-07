@@ -211,6 +211,34 @@ export async function extractRecentDiff(file: string): Promise<string | null> {
 	}
 }
 
+/**
+ * Files modified in the working tree relative to HEAD, as repo-relative paths.
+ *
+ * Used to describe *what an agent actually changed* between a failure and a
+ * `verify` run (item 32). Returns an empty list outside a git repo, in a repo
+ * with no commits, or on any error — this must never fail a verification.
+ */
+export async function listChangedFiles(cwd: string, limit = 10): Promise<string[]> {
+	try {
+		const gitRoot = await findGitRoot(cwd.endsWith("/") ? cwd : `${cwd}/`);
+		if (!gitRoot || !(await hasHead(gitRoot))) return [];
+		const proc = Bun.spawn(["git", "diff", "--name-only", "HEAD"], {
+			cwd: gitRoot,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const text = await new Response(proc.stdout).text();
+		if ((await proc.exited) !== 0) return [];
+		return text
+			.split("\n")
+			.map((l) => l.trim())
+			.filter((l) => l.length > 0)
+			.slice(0, limit);
+	} catch {
+		return [];
+	}
+}
+
 function escapeRegex(str: string): string {
 	return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

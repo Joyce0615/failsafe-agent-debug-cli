@@ -121,6 +121,8 @@ export const FailureDiagnosisSchema = z.object({
 		.object({
 			detected: z.literal(true),
 			occurrences: z.number().int(),
+			/** Recorded fixes that were tried and did not resolve it (item 32). */
+			failed_fix_attempts: z.number().int().optional(),
 			reason: z.string(),
 			recommendation: z.string(),
 		})

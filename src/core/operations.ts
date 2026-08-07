@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCommand } from "../capture/runner.js";
 import { ExitCode } from "../cli/exit-codes.js";
+import { listChangedFiles } from "../diagnosis/context.js";
 import { diagnose } from "../diagnosis/engine.js";
 import {
 	detectAndParse,
@@ -390,7 +391,53 @@ async function verifyFailureImpl(
 			signature: `${signature.exception_type ?? "?"}|${signature.top_frame_function ?? "?"}|${signature.top_frame_file ?? "?"}`,
 		};
 	}
+
+	// Reflexion-style episodic memory (item 32): a verification that did NOT
+	// resolve the failure is a disproven fix. Record what was tried so the next
+	// diagnosis can say "already tried, did not resolve" instead of letting the
+	// agent rediscover the same dead end.
+	const attempt = await recordVerifyAttempt(failure, allErrors, checks, allPassed, store);
+	if (attempt) data.recorded_attempt = attempt;
+
 	return { ok: true, data };
+}
+
+/**
+ * Persist the outcome of a `verify` run as a `FixAttempt`, described by the
+ * working-tree files the agent changed since HEAD plus which check still
+ * failed. Returns the recorded attempt, or null when there was nothing to
+ * record (no checks ran, or the store cannot record attempts).
+ */
+async function recordVerifyAttempt(
+	failure: FailureRecord,
+	allErrors: FailureRecord["parsed"][number]["errors"],
+	checks: Array<{ kind: string; status: string; message?: string }>,
+	allPassed: boolean,
+	store: FailsafeStore,
+): Promise<Record<string, unknown> | null> {
+	if (checks.length === 0 || typeof store.recordFixAttempt !== "function") return null;
+
+	const changed = await listChangedFiles(failure.cwd);
+	const summary =
+		changed.length > 0
+			? `edited ${changed.join(", ")}`
+			: "no tracked file changes since the failure was captured";
+	const failedChecks = checks.filter((c) => c.status !== "passed");
+	const detail = allPassed
+		? "all verification checks passed"
+		: failedChecks.map((c) => c.message ?? `${c.kind} ${c.status}`).join("; ");
+
+	const attempt = {
+		signature_hash: computeSignatureHash(allErrors, failure.primary_location),
+		failure_id: failure.failure_id,
+		attempted_at: new Date().toISOString(),
+		summary,
+		outcome: (allPassed ? "resolved" : "unresolved") as "resolved" | "unresolved",
+		detail,
+		files_changed: changed.length > 0 ? changed : undefined,
+	};
+	store.recordFixAttempt(attempt);
+	return { summary: attempt.summary, outcome: attempt.outcome };
 }
 
 export type ExplainFixOption = {

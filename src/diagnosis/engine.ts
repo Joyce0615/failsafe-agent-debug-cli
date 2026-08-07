@@ -39,6 +39,11 @@ const FLAKY_CONFIDENCE_CEILING = 0.3;
  */
 const TEMPLATE_MINING_CONFIDENCE = 0.25;
 
+/** How many recorded attempts to load per signature (bounded query). */
+const ATTEMPT_MEMORY_LIMIT = 20;
+/** How many of those to spell out in `uncertainty` before summarizing. */
+const ATTEMPT_MEMORY_SURFACED = 3;
+
 type StoreInterface = {
 	findSimilarFailures(
 		signature: FailureSignature,
@@ -54,6 +59,13 @@ type StoreInterface = {
 	getFlakySignature(hash: string): import("../rules/types.js").FlakyRecord | null;
 	upsertFlakySignature(record: import("../rules/types.js").FlakyRecord): void;
 	listFlakySignatures(): import("../rules/types.js").FlakyRecord[];
+	/**
+	 * Optional Reflexion-style attempt memory (item 32). When present, prior
+	 * fixes that did NOT resolve this signature are surfaced as uncertainty and
+	 * counted toward the loop warning.
+	 */
+	getFixAttempts?(signatureHash: string, limit?: number): import("../rules/types.js").FixAttempt[];
+	countFailedFixAttempts?(signatureHash: string): number;
 	// Optional diagnosis cache keyed by signature hash + rule/schema fingerprint.
 	// When present, an identical signature can be served without re-running the
 	// expensive context-extraction, git-diff, and rule-evaluation steps.
@@ -103,15 +115,52 @@ export async function diagnose(
 	// grows over time) and overlaid on both the cached and fresh packets.
 	const loopThreshold = config?.rules?.loop_warning_threshold ?? 3;
 	const recurrenceCount = store.countUnresolvedAfterDate(signatureHash, "1970-01-01T00:00:00.000Z");
-	const loopWarning: FailureDiagnosis["loop_warning"] =
-		recurrenceCount >= loopThreshold
-			? {
-					detected: true,
-					occurrences: recurrenceCount,
-					reason: `This failure signature has recurred unresolved ${recurrenceCount} times; repeated patches are not converging.`,
-					recommendation: `Stop patching blind — confirm the root cause at runtime: run 'failsafe debug ${failure.failure_id} --break primary', then step/inspect the failing state before the next fix.`,
-				}
-			: undefined;
+
+	// Reflexion-style attempt memory (item 32): fixes already proven not to work
+	// for this signature. Also time-varying, so — like the loop warning — it is
+	// computed outside the diagnosis cache and overlaid on the returned packet.
+	const failedAttempts = store.getFixAttempts
+		? store.getFixAttempts(signatureHash, ATTEMPT_MEMORY_LIMIT).filter((a) => {
+				return a.outcome === "unresolved";
+			})
+		: [];
+	const failedAttemptCount = store.countFailedFixAttempts
+		? store.countFailedFixAttempts(signatureHash)
+		: failedAttempts.length;
+
+	// A patch that was tried and did not work is as strong a loop signal as a
+	// bare recurrence, so either can trip the warning.
+	const loopDetected = recurrenceCount >= loopThreshold || failedAttemptCount >= loopThreshold;
+	const loopWarning: FailureDiagnosis["loop_warning"] = loopDetected
+		? {
+				detected: true,
+				occurrences: recurrenceCount,
+				failed_fix_attempts: failedAttemptCount > 0 ? failedAttemptCount : undefined,
+				reason:
+					failedAttemptCount > 0
+						? `This failure signature has recurred unresolved ${recurrenceCount} time(s) and ${failedAttemptCount} recorded fix attempt(s) did not resolve it; repeated patches are not converging.`
+						: `This failure signature has recurred unresolved ${recurrenceCount} times; repeated patches are not converging.`,
+				recommendation: `Stop patching blind — confirm the root cause at runtime: run 'failsafe debug ${failure.failure_id} --break primary', then step/inspect the failing state before the next fix.`,
+			}
+		: undefined;
+
+	/** Prepend "already tried" notes to a packet's uncertainty list (copying it). */
+	const withAttemptMemory = (packet: FailureDiagnosis): FailureDiagnosis => {
+		if (failedAttempts.length === 0) return packet;
+		const notes = failedAttempts
+			.slice(0, ATTEMPT_MEMORY_SURFACED)
+			.map(
+				(a) =>
+					`Already tried, did not resolve: ${a.summary}${a.detail ? ` (${a.detail})` : ""} [${a.attempted_at}]`,
+			);
+		if (failedAttemptCount > ATTEMPT_MEMORY_SURFACED) {
+			notes.push(
+				`${failedAttemptCount - ATTEMPT_MEMORY_SURFACED} further attempt(s) for this signature also failed; do not repeat them.`,
+			);
+		}
+		packet.uncertainty = [...notes, ...packet.uncertainty];
+		return packet;
+	};
 
 	/**
 	 * Attach the confirming probe (item 31). Computed outside the cache because
@@ -142,7 +191,7 @@ export async function diagnose(
 			// Never inherit a probe aimed at a previous failure's id.
 			packet.confirming_intervention = undefined;
 			if (loopWarning) packet.loop_warning = loopWarning;
-			return withIntervention(packet);
+			return withIntervention(withAttemptMemory(packet));
 		}
 	}
 
@@ -330,7 +379,7 @@ export async function diagnose(
 	// including for an in-memory store that keeps the object by reference.
 	const packet: FailureDiagnosis = { ...diagnosis };
 	if (loopWarning) packet.loop_warning = loopWarning;
-	return withIntervention(packet);
+	return withIntervention(withAttemptMemory(packet));
 }
 
 function computeSimpleSignature(
