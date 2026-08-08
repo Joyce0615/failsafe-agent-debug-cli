@@ -1,3 +1,4 @@
+import { retrieveForFailure } from "../memory/store.js";
 import { loadDeclaredRules } from "../rules/declared.js";
 import { evaluateRules } from "../rules/engine.js";
 import { checkFlaky } from "../rules/flaky.js";
@@ -18,7 +19,7 @@ import type { FailureRecord, ParsedError } from "../types/failure.js";
 import type { FailureSignature } from "../types/repro.js";
 import { diagnosisId } from "../utils/id.js";
 import { computeTokenBudget } from "../utils/tokens.js";
-import { diagnosisCacheKey } from "./cache.js";
+import { diagnosisCacheKey, memoryFingerprint } from "./cache.js";
 import { extractRecentDiff, extractSourceSlice, extractTestSlice } from "./context.js";
 import { buildConfirmingIntervention } from "./intervention.js";
 import { TEMPLATES } from "./templates.js";
@@ -102,7 +103,11 @@ export async function diagnose(
 	// promotion/boost for this signature invalidates a stale cached packet rather
 	// than masking the now-stronger learned diagnosis.
 	const learnedRule = store.getLearnedRuleByHash(signatureHash);
-	const cacheKey = diagnosisCacheKey(signatureHash, declaredRules, learnedRule);
+	const memoryIndexPath = config?.memory?.enabled
+		? config.memory.index_file.startsWith("/")
+			? config.memory.index_file
+			: `${failure.cwd}/${config.memory.index_file}`
+		: null;
 
 	// A signature that recurs after a prior fix is non-deterministic; such
 	// failures are never served from (or written to) the cache so their packet
@@ -127,6 +132,16 @@ export async function diagnose(
 	const failedAttemptCount = store.countFailedFixAttempts
 		? store.countFailedFixAttempts(signatureHash)
 		: failedAttempts.length;
+
+	// The cache key is built here (after learning + attempt counts are known) so
+	// it also reflects the project-memory inputs a cached `retrieval` block was
+	// derived from: a rebuilt index or a new disproven fix invalidates it.
+	const cacheKey = diagnosisCacheKey(
+		signatureHash,
+		declaredRules,
+		learnedRule,
+		memoryFingerprint(memoryIndexPath, failedAttemptCount),
+	);
 
 	// A patch that was tried and did not work is as strong a loop signal as a
 	// bare recurrence, so either can trip the warning.
@@ -313,6 +328,41 @@ export async function diagnose(
 		}
 	}
 
+	// Step 7c: Project-context external memory (item 36). Opt-in; retrieval is
+	// keyed by the failure's frames/symbols/tokens plus the files recent failed
+	// fix attempts touched (MemFL's dynamic memory), and is byte-budgeted. The
+	// index holds no file content, so nothing here can leak a secret.
+	let retrieval: FailureDiagnosis["retrieval"];
+	if (config?.memory?.enabled) {
+		const indexPath = config.memory.index_file.startsWith("/")
+			? config.memory.index_file
+			: `${failure.cwd}/${config.memory.index_file}`;
+		const recentFixFiles = failedAttempts.flatMap((a) => a.files_changed ?? []);
+		const result = retrieveForFailure(indexPath, allErrors, primaryLocation, {
+			budgetBytes: config.memory.retrieval_budget_bytes,
+			recentFixFiles,
+		});
+		if (result) {
+			retrieval = {
+				source: "project_index",
+				index_version: result.index_version,
+				budget_bytes: result.budget_bytes,
+				used_bytes: result.used_bytes,
+				considered: result.considered,
+				entries: result.entries.map((e) => ({ id: e.id, score: e.score, reason: e.reason })),
+			};
+			for (const entry of result.entries.slice(0, config.memory.max_evidence)) {
+				evidence.push({
+					kind: "project_memory",
+					location: entry.id,
+					value: `${entry.reason} (score ${Math.round(entry.score * 100) / 100})${
+						entry.symbols.length > 0 ? `; symbols: ${entry.symbols.slice(0, 5).join(", ")}` : ""
+					}`,
+				});
+			}
+		}
+	}
+
 	// Step 8: Build suggested next actions
 	const nextActions = buildNextActions(
 		failure.failure_id,
@@ -362,6 +412,7 @@ export async function diagnose(
 		rule_source: ruleSource as FailureDiagnosis["rule_source"],
 		rule_id: ruleId,
 		enforcement: enforcement as FailureDiagnosis["enforcement"],
+		retrieval,
 	};
 
 	const diagBytes = Buffer.byteLength(JSON.stringify(diagnosis));

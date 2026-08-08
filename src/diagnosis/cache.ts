@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import type { DeclaredRule, LearnedRule } from "../rules/types.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 
@@ -46,6 +47,29 @@ export function diagnosisCacheKey(
 	signatureHash: string,
 	declaredRules: DeclaredRule[],
 	learnedRule?: LearnedRule | null,
+	memoryFingerprint?: string,
 ): string {
-	return `${SCHEMA_VERSION}|${declaredRulesFingerprint(declaredRules)}|${learnedRuleFingerprint(learnedRule)}|${signatureHash}`;
+	const memory = memoryFingerprint ? `|${memoryFingerprint}` : "";
+	return `${SCHEMA_VERSION}|${declaredRulesFingerprint(declaredRules)}|${learnedRuleFingerprint(learnedRule)}|${signatureHash}${memory}`;
+}
+
+/**
+ * Fingerprint of the project-memory inputs a cached diagnosis embedded
+ * (item 36): the index file's mtime+size (a cheap stat, no parse) and the
+ * failed-fix-attempt count that biases retrieval. A rebuilt index or a new
+ * disproven fix therefore invalidates the packet whose `retrieval` block was
+ * derived from the old state. Returns undefined when memory is disabled, which
+ * keeps the key byte-identical to the pre-item-36 form.
+ */
+export function memoryFingerprint(
+	indexPath: string | null,
+	failedAttemptCount: number,
+): string | undefined {
+	if (!indexPath) return undefined;
+	try {
+		const st = statSync(indexPath);
+		return `mem:${Math.round(st.mtimeMs)}:${st.size}:${failedAttemptCount}`;
+	} catch {
+		return `mem:none:${failedAttemptCount}`;
+	}
 }

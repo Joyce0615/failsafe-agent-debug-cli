@@ -13,6 +13,7 @@ import { registerExplainCommand } from "./explain.js";
 import { registerHistoryCommand } from "./history.js";
 import { registerInspectCommand } from "./inspect.js";
 import { registerKbCommand } from "./kb.js";
+import { registerMemoryCommand } from "./memory.js";
 import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
 import { registerRulesCommand } from "./rules.js";
@@ -53,6 +54,9 @@ registerWatchCommand(program);
 registerResolveCommand(program);
 registerRulesCommand(program);
 registerKbCommand(program);
+
+// Phase 4: Project-context memory (item 36)
+registerMemoryCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();

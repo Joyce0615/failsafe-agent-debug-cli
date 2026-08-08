@@ -71,6 +71,22 @@ export const FailsafeConfigSchema = z.object({
 			loop_warning_threshold: z.number().int().default(3),
 		})
 		.default({}),
+	/**
+	 * Project-context external memory (item 36). Opt-in: with `enabled:false`
+	 * (the default) nothing is built, read, or attached to any packet.
+	 */
+	memory: z
+		.object({
+			enabled: z.boolean().default(false),
+			index_file: z.string().default(".failsafe/project-index.json"),
+			/** Hard cap on indexed files. */
+			max_files: z.number().int().default(2000),
+			/** Byte budget for the evidence retrieved per diagnosis. */
+			retrieval_budget_bytes: z.number().int().default(2000),
+			/** Max retrieved entries surfaced as diagnosis evidence. */
+			max_evidence: z.number().int().default(3),
+		})
+		.default({}),
 });
 export type FailsafeConfig = z.infer<typeof FailsafeConfigSchema>;
 

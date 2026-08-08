@@ -30,6 +30,7 @@ export const EvidenceItemSchema = z.object({
 		"history_match",
 		"error_message",
 		"log_template",
+		"project_memory",
 	]),
 	location: z.string().optional(),
 	value: z.string(),
@@ -132,5 +133,20 @@ export const FailureDiagnosisSchema = z.object({
 	 * specific probe that validates the hypothesis at runtime (item 31).
 	 */
 	confirming_intervention: ConfirmingInterventionSchema.optional(),
+	/**
+	 * Provenance for project-memory retrieval (item 36): which index entries
+	 * were pulled, with their scores and the byte budget they were held to.
+	 * Absent unless `config.memory.enabled` and an index exists.
+	 */
+	retrieval: z
+		.object({
+			source: z.literal("project_index"),
+			index_version: z.number().int(),
+			budget_bytes: z.number().int(),
+			used_bytes: z.number().int(),
+			considered: z.number().int(),
+			entries: z.array(z.object({ id: z.string(), score: z.number(), reason: z.string() })),
+		})
+		.optional(),
 });
 export type FailureDiagnosis = z.infer<typeof FailureDiagnosisSchema>;
