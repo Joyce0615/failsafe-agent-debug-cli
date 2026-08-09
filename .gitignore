@@ -22,3 +22,8 @@ tests/e2e/pytest_project/.pytest_cache/
 
 # Logs
 *.log
+
+# Benchmark corpora and sweep results (item 39) — never committed or packaged.
+bench-data/
+bench-results/
+*.bench.jsonl

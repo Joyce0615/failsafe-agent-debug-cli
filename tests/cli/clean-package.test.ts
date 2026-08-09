@@ -32,6 +32,12 @@ function seedFakeRepo(): string {
 	});
 	writeFileSync(join(root, "tests", "e2e", "node_project", "package.json"), "{}\n");
 	writeFileSync(join(root, "debug.log"), "log\n");
+	// Benchmark corpora + sweep results (item 39): never cleaned into a release.
+	mkdirSync(join(root, "bench-data"), { recursive: true });
+	writeFileSync(join(root, "bench-data", "swe-bench.json"), "[]\n");
+	mkdirSync(join(root, "bench-results"), { recursive: true });
+	writeFileSync(join(root, "bench-results", "run.jsonl"), "{}\n");
+	writeFileSync(join(root, "sweep.bench.jsonl"), "{}\n");
 	return root;
 }
 
@@ -48,6 +54,8 @@ describe("clean script", () => {
 			expect(existsSync(join(root, ".pytest_cache"))).toBe(false);
 			expect(existsSync(join(root, "tests", "e2e", "node_project", "node_modules"))).toBe(false);
 			expect(existsSync(join(root, "debug.log"))).toBe(false);
+			expect(existsSync(join(root, "bench-data"))).toBe(false);
+			expect(existsSync(join(root, "bench-results"))).toBe(false);
 
 			// Source + fixture manifest preserved.
 			expect(existsSync(join(root, "src", "index.ts"))).toBe(true);
@@ -95,6 +103,10 @@ describe("package script", () => {
 			expect(entries.some((e) => e.includes("/.failsafe/"))).toBe(false);
 			expect(entries.some((e) => e.includes("/.pytest_cache/"))).toBe(false);
 			expect(entries.some((e) => e.endsWith(".log"))).toBe(false);
+			// Benchmark data/results never ship (item 39).
+			expect(entries.some((e) => e.includes("bench-data"))).toBe(false);
+			expect(entries.some((e) => e.includes("bench-results"))).toBe(false);
+			expect(entries.some((e) => e.endsWith(".bench.jsonl"))).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 			rmSync(outDir, { recursive: true, force: true });

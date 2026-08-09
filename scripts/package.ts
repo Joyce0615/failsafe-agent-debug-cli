@@ -37,6 +37,11 @@ export async function packageRepo(
 		`${base}/dist`,
 		`${base}/.failsafe`,
 		`${base}/.pytest_cache`,
+		// Benchmark corpora and sweep results (item 39) are large, machine- and
+		// dataset-specific, and must never ship in a release tar.
+		`${base}/bench-data`,
+		`${base}/bench-results`,
+		"*.bench.jsonl",
 		"*.tar.gz",
 		"*.log",
 	];

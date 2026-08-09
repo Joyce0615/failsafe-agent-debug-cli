@@ -8,6 +8,7 @@
  *   - `runs/`               (a stray top-level runs dir, if any)
  *   - `dist/`               (build output)
  *   - `.pytest_cache/`      (stray Python test cache)
+ *   - `bench-data/`, `bench-results/`  (benchmark corpora + sweep results)
  *   - `tests/e2e/<x>/node_modules/`  (installed e2e fixtures — gitignored)
  *   - top-level `*.log` files
  *
@@ -31,7 +32,7 @@ export function clean(root: string = REPO_ROOT): string[] {
 		}
 	};
 
-	for (const rel of [".failsafe", "runs", "dist", ".pytest_cache"]) {
+	for (const rel of [".failsafe", "runs", "dist", ".pytest_cache", "bench-data", "bench-results"]) {
 		removePath(rel);
 	}
 
