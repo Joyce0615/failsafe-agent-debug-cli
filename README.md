@@ -208,6 +208,10 @@ output matches **no** parser, a last-resort Drain-style template miner
 candidate, and a stable signature so unknown tools still produce a groupable,
 low-confidence diagnosis instead of "Unknown failure".
 
+## Trace ingestion (read-only)
+
+`src/trace/` turns a *retrieved* distributed trace into the same compact diagnosis packet as command output. Adapters normalize Jaeger JSON and OTLP/Tempo JSON into one span model (redacting attributes at ingest), root causes are ranked with the same causal graph used for multi-agent traces, and the packet carries `trace_provenance`. Every query must name a trace id — wildcard/unbounded scans are rejected — and both the lookback window and span count are capped. There is no write path to any backend.
+
 ## Project memory (opt-in)
 
 `failsafe memory build` indexes the repo's symbols, import graph, and test ownership into `.failsafe/project-index.json`; `memory refresh` re-hashes and rebuilds only what changed; `memory status`/`memory query <id>` inspect it. With `memory.enabled: true` in config, `diagnose` retrieves a byte-budgeted slice keyed by the failure's frames, symbols, and the files recent failed fixes touched, and records the ids/scores in a `retrieval` block. The index stores **no file content** — only paths, symbol names, imports, and hashes — and never indexes `.env*`, key/credential paths, or ignored directories.

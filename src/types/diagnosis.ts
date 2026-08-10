@@ -138,6 +138,21 @@ export const FailureDiagnosisSchema = z.object({
 	 * were pulled, with their scores and the byte budget they were held to.
 	 * Absent unless `config.memory.enabled` and an index exists.
 	 */
+	/**
+	 * Provenance for a diagnosis built from a retrieved distributed trace
+	 * (item 40) rather than from command output.
+	 */
+	trace_provenance: z
+		.object({
+			backend: z.enum(["jaeger", "tempo"]),
+			source: z.string(),
+			trace_id: z.string(),
+			span_count: z.number().int(),
+			truncated: z.boolean(),
+			dropped_spans: z.number().int(),
+			max_spans: z.number().int(),
+		})
+		.optional(),
 	retrieval: z
 		.object({
 			source: z.literal("project_index"),
