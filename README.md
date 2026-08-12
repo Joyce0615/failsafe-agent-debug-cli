@@ -143,6 +143,27 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces failsafe diagnose la
 
 Each span then also carries `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name` (`failsafe_analyze`/`_parse`/`_diagnose`/`_repro`/`_verify`), `gen_ai.tool.type=function`, and — where a token budget exists — `gen_ai.usage.input_tokens` (what the raw output would have cost) and `gen_ai.usage.output_tokens` (what the compact packet costs). The `failsafe.*` set is unchanged; nothing `gen_ai.*` is emitted without the opt-in.
 
+### Content-capture policy
+
+Every attribute is evaluated by a capture policy *before* it is written to a span, so the batch processor's buffer — and therefore every exporter — only ever holds cleared values. Three modes:
+
+| Mode | Emits |
+| --- | --- |
+| `none` | Span name, timing, and status only. No attributes. |
+| `metadata` (default) | Allowlisted low-cardinality fields: counts, enums, confidences, schema version. |
+| `redacted-content` | The above plus content values, each secret-redacted and truncated first. |
+
+Classification is deny-by-default: numeric and boolean values are metadata by construction, and a *string* value is content unless its key is on the canonical allowlist — so an attribute added anywhere in the codebase is withheld until it is explicitly classified.
+
+Three ceilings bound the payload and the label cardinality a backend has to index: `max_attribute_bytes` per value (512), `max_attributes_per_span` (64), and `max_attribute_cardinality` distinct values per key (64). Anything withheld, truncated, redacted, or collapsed is counted, and the totals ride along on the span as `failsafe.capture_dropped_fields`, `capture_truncated_fields`, `capture_redacted_fields`, and `capture_high_cardinality_fields` — a dropped field stays observable as a number even when its value is not.
+
+Configure in `.failsafe/config.json` under `telemetry`, or override the mode for a single run:
+
+```bash
+FAILSAFE_TELEMETRY_CAPTURE=none \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces failsafe run "pytest tests/"
+```
+
 Example `.failsafe/rules.yaml`:
 
 ```yaml

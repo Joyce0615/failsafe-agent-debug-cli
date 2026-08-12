@@ -72,6 +72,26 @@ export const FailsafeConfigSchema = z.object({
 		})
 		.default({}),
 	/**
+	 * Telemetry content-capture policy (item 41). Enforced before any attribute
+	 * reaches a span, so an exporter never buffers a value this gate rejects.
+	 */
+	telemetry: z
+		.object({
+			/**
+			 * `none` emits spans with no attributes, `metadata` (default) emits
+			 * only allowlisted low-cardinality fields, `redacted-content` also
+			 * emits content values after secret redaction and truncation.
+			 */
+			capture_mode: z.enum(["none", "metadata", "redacted-content"]).default("metadata"),
+			/** Byte ceiling per attribute value. */
+			max_attribute_bytes: z.number().int().default(512),
+			/** Ceiling on attributes accepted per span attribute batch. */
+			max_attributes_per_span: z.number().int().default(64),
+			/** Distinct values tolerated per attribute key, process-wide. */
+			max_attribute_cardinality: z.number().int().default(64),
+		})
+		.default({}),
+	/**
 	 * Project-context external memory (item 36). Opt-in: with `enabled:false`
 	 * (the default) nothing is built, read, or attached to any packet.
 	 */

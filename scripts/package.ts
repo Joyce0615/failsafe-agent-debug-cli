@@ -5,7 +5,7 @@
  * and free of generated artifacts.
  *
  * Excludes: any `node_modules/`, `.git/`, `dist/`, `.failsafe/`, `.pytest_cache/`,
- * and stray `*.tar.gz` / `*.log` files.
+ * `__pycache__/`, and stray `*.pyc` / `*.tar.gz` / `*.log` files.
  *
  * Usage:
  *   bun scripts/package.ts [outFile]          # default: ~/GitHub/failsafe.tar.gz
@@ -42,6 +42,9 @@ export async function packageRepo(
 		`${base}/bench-data`,
 		`${base}/bench-results`,
 		"*.bench.jsonl",
+		// Python bytecode caches left by the source-controlled pytest fixture.
+		"__pycache__",
+		"*.pyc",
 		"*.tar.gz",
 		"*.log",
 	];

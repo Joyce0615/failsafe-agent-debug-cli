@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { FailsafeStore } from "../storage/store.js";
+import { configureTelemetryCapture } from "../telemetry/capture-policy.js";
 import {
 	DEFAULT_CONFIG,
 	type FailsafeConfig,
@@ -10,6 +11,14 @@ import type { FailureRecord } from "../types/failure.js";
 import { ExitCode } from "./exit-codes.js";
 import { type OutputOptions, outputResult, resolveOutputOptions } from "./format.js";
 
+/**
+ * Load workspace config, and install its telemetry capture policy (item 41).
+ *
+ * Every CLI command and MCP tool call routes through here, so this is the one
+ * place that has to arm the content-capture gate; a command that forgets would
+ * otherwise silently fall back to the (safe) default policy rather than the
+ * workspace's own.
+ */
 export function loadConfig(cwd?: string): FailsafeConfig {
 	const workDir = cwd ?? process.cwd();
 	const configPath = `${workDir}/.failsafe/config.json`;
@@ -18,12 +27,15 @@ export function loadConfig(cwd?: string): FailsafeConfig {
 		try {
 			const raw = readFileSync(configPath, "utf-8");
 			const parsed = JSON.parse(raw);
-			return FailsafeConfigSchema.parse(parsed);
+			const config = FailsafeConfigSchema.parse(parsed);
+			configureTelemetryCapture(config);
+			return config;
 		} catch {
 			// Fall through to default
 		}
 	}
 
+	configureTelemetryCapture(DEFAULT_CONFIG);
 	return DEFAULT_CONFIG;
 }
 

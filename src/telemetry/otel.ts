@@ -9,8 +9,17 @@
  *
  * Spans are exported over OTLP/HTTP. Call `shutdownTelemetry()` before the
  * process exits to flush pending spans.
+ *
+ * All attributes pass through the capture policy in `capture-policy.ts` before
+ * they are written to a span (item 41), so the span processor's buffer — and
+ * therefore every exporter — only ever holds values the policy has cleared.
  */
 import { type Span, SpanStatusCode, type Tracer, trace } from "@opentelemetry/api";
+import {
+	type CaptureCounters,
+	applyCapturePolicy,
+	capturePolicySpanAttributes,
+} from "./capture-policy.js";
 
 let tracer: Tracer | null = null;
 let provider: { forceFlush(): Promise<void>; shutdown(): Promise<void> } | null = null;
@@ -81,9 +90,20 @@ export async function withSpan<T>(
 	}
 
 	return tracer.startActiveSpan(name, async (span: Span) => {
-		if (initialAttrs) applyAttributes(span, initialAttrs);
+		// Per-span tally of what the capture policy withheld or rewrote, so the
+		// span can report the shape of its own omissions before it ends.
+		const tally = { dropped: 0, truncated: 0, redacted: 0, high_cardinality: 0 };
+		const write = (attrs: SpanAttributes) => {
+			const counters = applyAttributes(span, attrs);
+			tally.dropped += counters.dropped_mode + counters.dropped_limit;
+			tally.truncated += counters.truncated;
+			tally.redacted += counters.redacted;
+			tally.high_cardinality += counters.high_cardinality;
+		};
+
+		if (initialAttrs) write(initialAttrs);
 		try {
-			const result = await fn((attrs) => applyAttributes(span, attrs));
+			const result = await fn(write);
 			span.setStatus({ code: SpanStatusCode.OK });
 			return result;
 		} catch (err) {
@@ -93,6 +113,16 @@ export async function withSpan<T>(
 			});
 			throw err;
 		} finally {
+			applyAttributes(
+				span,
+				capturePolicySpanAttributes({
+					dropped_mode: tally.dropped,
+					dropped_limit: 0,
+					truncated: tally.truncated,
+					redacted: tally.redacted,
+					high_cardinality: tally.high_cardinality,
+				}),
+			);
 			span.end();
 		}
 	});
@@ -110,12 +140,31 @@ export function spanAttributeKey(key: string): string {
 	return key.includes(".") ? key : `failsafe.${key}`;
 }
 
-function applyAttributes(span: Span, attrs: SpanAttributes): void {
-	for (const [key, value] of Object.entries(attrs)) {
+/**
+ * Anything that accepts attributes. A real `Span` satisfies this; so does a
+ * recording fake, which is how `tests/telemetry/capture-policy.test.ts` proves
+ * that a raw value never reaches the sink.
+ */
+export type AttributeSink = {
+	setAttribute(key: string, value: string | number | boolean): unknown;
+};
+
+/**
+ * The single writer into a span's attribute set.
+ *
+ * Every attribute is evaluated by the capture policy (item 41) *before*
+ * `setAttribute`, so nothing the policy rejects is ever buffered by the span
+ * processor or observed by an exporter. Returns the policy counters so the
+ * caller can summarize what was withheld.
+ */
+export function applyAttributes(span: AttributeSink, attrs: SpanAttributes): CaptureCounters {
+	const { attributes, counters } = applyCapturePolicy(attrs);
+	for (const [key, value] of Object.entries(attributes)) {
 		if (value !== undefined) {
 			span.setAttribute(spanAttributeKey(key), value);
 		}
 	}
+	return counters;
 }
 
 /** Flush and shut down the tracer provider. Safe to call when disabled. */

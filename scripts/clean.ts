@@ -10,6 +10,7 @@
  *   - `.pytest_cache/`      (stray Python test cache)
  *   - `bench-data/`, `bench-results/`  (benchmark corpora + sweep results)
  *   - `tests/e2e/<x>/node_modules/`  (installed e2e fixtures — gitignored)
+ *   - any nested `__pycache__/`     (bytecode caches left by the pytest fixtures)
  *   - top-level `*.log` files
  *
  * Usage:
@@ -47,6 +48,13 @@ export function clean(root: string = REPO_ROOT): string[] {
 		}
 	}
 
+	// Python bytecode caches, anywhere in the tree. The pytest e2e fixture is
+	// source-controlled but running it leaves `__pycache__/` behind, which is
+	// gitignored and must not survive into a release tar.
+	for (const rel of findPycacheDirs(root, "")) {
+		removePath(rel);
+	}
+
 	// Top-level *.log files.
 	for (const entry of readdirSync(root)) {
 		if (entry.endsWith(".log") && statSync(join(root, entry)).isFile()) {
@@ -55,6 +63,22 @@ export function clean(root: string = REPO_ROOT): string[] {
 	}
 
 	return removed;
+}
+
+/** Depth-first walk collecting `__pycache__` directories, relative to `root`. */
+function findPycacheDirs(root: string, rel: string): string[] {
+	const abs = rel ? join(root, rel) : root;
+	const found: string[] = [];
+	for (const entry of readdirSync(abs, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const childRel = rel ? join(rel, entry.name) : entry.name;
+		if (entry.name === "__pycache__") {
+			found.push(childRel);
+		} else if (entry.name !== "node_modules" && entry.name !== ".git") {
+			found.push(...findPycacheDirs(root, childRel));
+		}
+	}
+	return found;
 }
 
 if (import.meta.main) {

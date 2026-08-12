@@ -32,6 +32,15 @@ function seedFakeRepo(): string {
 	});
 	writeFileSync(join(root, "tests", "e2e", "node_project", "package.json"), "{}\n");
 	writeFileSync(join(root, "debug.log"), "log\n");
+	// Python bytecode cache beside a source-controlled pytest fixture.
+	mkdirSync(join(root, "tests", "e2e", "pytest_project", "src", "__pycache__"), {
+		recursive: true,
+	});
+	writeFileSync(
+		join(root, "tests", "e2e", "pytest_project", "src", "__pycache__", "auth.cpython-314.pyc"),
+		"\0\0",
+	);
+	writeFileSync(join(root, "tests", "e2e", "pytest_project", "src", "auth.py"), "x = 1\n");
 	// Benchmark corpora + sweep results (item 39): never cleaned into a release.
 	mkdirSync(join(root, "bench-data"), { recursive: true });
 	writeFileSync(join(root, "bench-data", "swe-bench.json"), "[]\n");
@@ -57,9 +66,16 @@ describe("clean script", () => {
 			expect(existsSync(join(root, "bench-data"))).toBe(false);
 			expect(existsSync(join(root, "bench-results"))).toBe(false);
 
+			expect(
+				existsSync(join(root, "tests", "e2e", "pytest_project", "src", "__pycache__")),
+			).toBe(false);
+
 			// Source + fixture manifest preserved.
 			expect(existsSync(join(root, "src", "index.ts"))).toBe(true);
 			expect(existsSync(join(root, "tests", "e2e", "node_project", "package.json"))).toBe(true);
+			expect(existsSync(join(root, "tests", "e2e", "pytest_project", "src", "auth.py"))).toBe(
+				true,
+			);
 
 			expect(removed).toContain(".failsafe");
 			expect(removed).toContain(join("tests", "e2e", "node_project", "node_modules"));
@@ -107,6 +123,11 @@ describe("package script", () => {
 			expect(entries.some((e) => e.includes("bench-data"))).toBe(false);
 			expect(entries.some((e) => e.includes("bench-results"))).toBe(false);
 			expect(entries.some((e) => e.endsWith(".bench.jsonl"))).toBe(false);
+			// Python bytecode caches never ship.
+			expect(entries.some((e) => e.includes("__pycache__"))).toBe(false);
+			expect(entries.some((e) => e.endsWith(".pyc"))).toBe(false);
+			// …but the source-controlled pytest fixture itself does.
+			expect(entries.some((e) => e.endsWith("pytest_project/src/auth.py"))).toBe(true);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 			rmSync(outDir, { recursive: true, force: true });
