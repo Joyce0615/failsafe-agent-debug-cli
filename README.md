@@ -78,6 +78,23 @@ Every `failsafe debug` packet carries an `action_budget`: a plan that divides an
 
 Override the ceiling with `--budget <actions[,tokens[,ms]]>` (default `24,12000,120000`).
 
+### Hypotheses
+
+`failsafe hypotheses` keeps the reasoning behind a localization instead of collapsing it to one category and a confidence number.
+
+| Command | Description |
+|---------|-------------|
+| `failsafe hypotheses build <id>` | Build and persist the `module → file → function → line` tree plus a competing branch |
+| `failsafe hypotheses list <id>` | Show the stored tree with its validation summary |
+| `failsafe hypotheses observe <id> <hyp-id> --outcome confirms\|refutes\|inconclusive --detail <text>` | Record what a probe showed and update posteriors |
+| `failsafe hypotheses abandon <id> <hyp-id> --reason <text>` | Drop a hypothesis, recording why |
+
+- **Hierarchical.** Refuting a file abandons every line hypothesis inside it, so an agent cannot keep probing a location it already ruled out.
+- **Falsifiable.** Each hypothesis carries a probe *and* the observation expected under each outcome, written before the probe runs — a result cannot be reinterpreted afterwards to support whatever was already believed.
+- **Bayesian.** Observations update posteriors through an explicit likelihood ratio (`--likelihood-if-true` / `--likelihood-if-false`) and renormalize across surviving siblings, so a refuted branch's belief moves to its competitors rather than evaporating.
+- **Intent-aware.** Hypotheses record where their notion of correct behavior came from (`spec`, `test`, `type`, `invariant`, `docstring`, `commit_message`, `inferred`), and conflicting sources are surfaced rather than silently resolved.
+- **Explicitly abandoned.** A reason is a required argument, not an optional field; the summary lists every dropped hypothesis with why it was dropped.
+
 ### Tiered Rules
 
 | Command | Description |

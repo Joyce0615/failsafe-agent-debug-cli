@@ -236,6 +236,32 @@ export const MIGRATIONS: Migration[] = [
 			ALTER TABLE flaky_signatures ADD COLUMN rerun_confirmed INTEGER;
 		`,
 	},
+	{
+		version: 8,
+		name: "hypotheses",
+		up: `
+			CREATE TABLE IF NOT EXISTS hypotheses (
+				hypothesis_id TEXT PRIMARY KEY,
+				failure_id TEXT NOT NULL,
+				parent_id TEXT,
+				level TEXT NOT NULL CHECK (level IN ('module', 'file', 'function', 'line')),
+				statement TEXT NOT NULL,
+				location TEXT,
+				prior REAL NOT NULL,
+				posterior REAL NOT NULL,
+				status TEXT NOT NULL
+					CHECK (status IN ('open', 'confirmed', 'refuted', 'abandoned')),
+				intent TEXT,
+				probe TEXT,
+				observations TEXT NOT NULL DEFAULT '[]',
+				abandonment_reason TEXT,
+				updated_at TEXT NOT NULL
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_hypotheses_failure ON hypotheses(failure_id);
+			CREATE INDEX IF NOT EXISTS idx_hypotheses_parent ON hypotheses(parent_id);
+		`,
+	},
 ];
 
 export function runMigrations(db: Database): void {

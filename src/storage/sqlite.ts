@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import type { Hypothesis, HypothesisTree } from "../diagnosis/hypothesis.js";
 import type { LearnedRule } from "../rules/types.js";
 import type { FixAttempt, FixOutcome, FlakyRecord } from "../rules/types.js";
 import { SCHEMA_VERSION } from "../types/common.js";
@@ -736,6 +737,74 @@ export class FailsafeSqlite {
 		);
 	}
 
+	// --------------- Hypotheses (item 43) ---------------
+
+	/**
+	 * Persist a whole hypothesis tree for a failure.
+	 *
+	 * Replaces the stored tree in one transaction: a tree is only meaningful as
+	 * a set (posteriors are normalized across siblings), so a partial write
+	 * would leave belief that does not add up.
+	 */
+	saveHypotheses(tree: HypothesisTree): void {
+		const now = new Date().toISOString();
+		this.db.transaction(() => {
+			this.db.run("DELETE FROM hypotheses WHERE failure_id = ?", [tree.failure_id]);
+			for (const h of tree.hypotheses) {
+				this.db.run(
+					`INSERT INTO hypotheses (
+						hypothesis_id, failure_id, parent_id, level, statement, location,
+						prior, posterior, status, intent, probe, observations,
+						abandonment_reason, updated_at
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					[
+						h.id,
+						h.failure_id,
+						h.parent_id ?? null,
+						h.level,
+						h.statement,
+						h.location ?? null,
+						h.prior,
+						h.posterior,
+						h.status,
+						h.intent ? JSON.stringify(h.intent) : null,
+						h.probe ? JSON.stringify(h.probe) : null,
+						JSON.stringify(h.observations),
+						h.abandonment_reason ?? null,
+						now,
+					],
+				);
+			}
+		})();
+	}
+
+	/** Load the hypothesis tree for a failure, or `null` when none is stored. */
+	getHypotheses(failureId: string): HypothesisTree | null {
+		const rows = this.db
+			.query("SELECT * FROM hypotheses WHERE failure_id = ? ORDER BY rowid ASC")
+			.all(failureId) as HypothesisRow[];
+		if (rows.length === 0) return null;
+		return {
+			schema_version: "0.1",
+			failure_id: failureId,
+			hypotheses: rows.map((row) => ({
+				id: row.hypothesis_id,
+				failure_id: row.failure_id,
+				...(row.parent_id ? { parent_id: row.parent_id } : {}),
+				level: row.level as Hypothesis["level"],
+				statement: row.statement,
+				...(row.location ? { location: row.location } : {}),
+				prior: row.prior,
+				posterior: row.posterior,
+				status: row.status as Hypothesis["status"],
+				...(row.intent ? { intent: safeJsonParse(row.intent, undefined) } : {}),
+				...(row.probe ? { probe: safeJsonParse(row.probe, undefined) } : {}),
+				observations: safeJsonParse(row.observations, []),
+				...(row.abandonment_reason ? { abandonment_reason: row.abandonment_reason } : {}),
+			})),
+		};
+	}
+
 	// --------------- Lifecycle ---------------
 
 	close(): void {
@@ -986,6 +1055,23 @@ interface DiagnosisRow {
 	rule_source: string | null;
 	rule_id: string | null;
 	enforcement: string | null;
+}
+
+interface HypothesisRow {
+	hypothesis_id: string;
+	failure_id: string;
+	parent_id: string | null;
+	level: string;
+	statement: string;
+	location: string | null;
+	prior: number;
+	posterior: number;
+	status: string;
+	intent: string | null;
+	probe: string | null;
+	observations: string;
+	abandonment_reason: string | null;
+	updated_at: string;
 }
 
 interface ReproRow {

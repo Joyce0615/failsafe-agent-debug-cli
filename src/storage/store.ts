@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import type { HypothesisTree } from "../diagnosis/hypothesis.js";
 import type { LearnedRule } from "../rules/types.js";
 import type { FixAttempt, FixOutcome, FlakyRecord } from "../rules/types.js";
 import type { FailsafeConfig } from "../types/config.js";
@@ -342,6 +343,19 @@ export class FailsafeStore {
 	 */
 	markSignatureResolved(failureId: string, summary: string, filesChanged: string[]): void {
 		this.sqlite.markSignatureResolved(failureId, summary, filesChanged);
+	}
+
+	/**
+	 * Persists the competing-hypothesis tree for a failure (item 43), replacing
+	 * any previously stored tree.
+	 */
+	saveHypotheses(tree: HypothesisTree): void {
+		this.sqlite.saveHypotheses(tree);
+	}
+
+	/** Loads the stored hypothesis tree for a failure, or `null`. */
+	getHypotheses(failureId: string): HypothesisTree | null {
+		return this.sqlite.getHypotheses(failureId);
 	}
 
 	/**

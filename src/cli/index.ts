@@ -11,6 +11,7 @@ import { registerDoctorCommand } from "./doctor.js";
 import { registerDumpCommand } from "./dump.js";
 import { registerExplainCommand } from "./explain.js";
 import { registerHistoryCommand } from "./history.js";
+import { registerHypothesesCommand } from "./hypotheses.js";
 import { registerInspectCommand } from "./inspect.js";
 import { registerKbCommand } from "./kb.js";
 import { registerMemoryCommand } from "./memory.js";
@@ -57,6 +58,9 @@ registerKbCommand(program);
 
 // Phase 4: Project-context memory (item 36)
 registerMemoryCommand(program);
+
+// Phase 5: Hierarchical hypothesis validation (item 43)
+registerHypothesesCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
