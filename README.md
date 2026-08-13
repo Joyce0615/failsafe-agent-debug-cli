@@ -68,6 +68,16 @@ All commands output JSON by default. Use `--format text` for human-readable outp
 
 Debug sessions are in-memory within a single process, so `step` and `inspect` cannot reconnect from a separate CLI invocation — they return a structured `debug_unavailable` packet. For unsupported runtimes (Node.js, Go, Rust, Java, .NET), `failsafe debug` returns a structured packet naming the needed adapter and fallback commands (`diagnose`, `repro`).
 
+#### Action budget and coarse-to-fine escalation
+
+Every `failsafe debug` packet carries an `action_budget`: a plan that divides an action/token/time ceiling across the competing hypotheses and walks the tiers `evidence → slice → breakpoint → step`, cheapest first.
+
+- **Allocated by hypothesis.** The diagnosed category is weighted by its own confidence and the residual belief becomes an explicit "something other than X" hypothesis, so a 0.4-confidence diagnosis does not quietly receive the whole budget. Every alternative gets at least one cheap look; no single hypothesis gets more than 60%.
+- **Gated on expected information gain.** Line-level stepping is only authorized when a probe is expected to shift belief by at least 0.15 bits. Absent a caller-supplied probe model the plan assumes weak discrimination and stops at `breakpoint`, reporting `stop_reason` — escalation has to be argued for.
+- **Terminates by name.** When a budget runs out the reason is one of `actions_exhausted`, `tokens_exhausted`, `time_exhausted`, `information_gain_below_threshold`, `hypotheses_exhausted`, or `resolved`, each with an actionable summary. "I ran out" is never confused with "I found it".
+
+Override the ceiling with `--budget <actions[,tokens[,ms]]>` (default `24,12000,120000`).
+
 ### Tiered Rules
 
 | Command | Description |

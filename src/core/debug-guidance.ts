@@ -10,11 +10,18 @@
  */
 import { ExitCode } from "../cli/exit-codes.js";
 import { checkRuntimeCapability } from "../debug/adapters/index.js";
+import {
+	type BudgetCeiling,
+	type BudgetHypothesis,
+	DEFAULT_CEILING,
+	buildDebugPlan,
+} from "../debug/budget.js";
 import { detectRuntime } from "../debug/launch.js";
 import { extractSourceSlice } from "../diagnosis/context.js";
 import type { FailsafeStore } from "../storage/store.js";
 import type { SourceLocation } from "../types/common.js";
 import type { Runtime } from "../types/debug.js";
+import type { FailureDiagnosis } from "../types/diagnosis.js";
 
 export type DebugGuidanceResult = { exit_code: number; data: Record<string, unknown> };
 
@@ -76,13 +83,58 @@ function resolveId(rawId: string, store: FailsafeStore): string | null {
 }
 
 /**
+ * Turn a stored diagnosis into the hypothesis set the action budget is split
+ * across (item 42).
+ *
+ * The diagnosed category is the leader, weighted by its own confidence, and the
+ * residual belief becomes an explicit "something else" hypothesis. Naming the
+ * residual matters: it is what stops a 0.4-confidence diagnosis from quietly
+ * receiving the entire budget, and it is the allocation an agent should spend if
+ * the leading probe refutes the leader.
+ */
+export function guidanceHypotheses(diagnosis: FailureDiagnosis | null): BudgetHypothesis[] {
+	const root = diagnosis?.root_cause;
+	if (!root) {
+		return [{ id: "unknown", label: "Root cause not yet diagnosed", prior: 1 }];
+	}
+	const confidence = Math.min(1, Math.max(0, root.confidence));
+	const hypotheses: BudgetHypothesis[] = [
+		{ id: root.category, label: root.explanation, prior: confidence },
+	];
+	if (confidence < 1) {
+		hypotheses.push({
+			id: "residual",
+			label: `Something other than ${root.category}`,
+			prior: 1 - confidence,
+			// The residual has no located suspect yet, so line-level stepping
+			// against it cannot be aimed anywhere useful.
+			max_tier: "breakpoint",
+		});
+	}
+	return hypotheses;
+}
+
+/** Parse `actions[,tokens[,ms]]` into a ceiling, falling back to the default. */
+export function resolveCeiling(spec?: string): BudgetCeiling {
+	if (!spec) return DEFAULT_CEILING;
+	const parts = spec.split(",").map((p) => Number.parseInt(p.trim(), 10));
+	const pick = (i: number, fallback: number): number =>
+		Number.isFinite(parts[i]) && parts[i] > 0 ? parts[i] : fallback;
+	return {
+		max_actions: pick(0, DEFAULT_CEILING.max_actions),
+		max_tokens: pick(1, DEFAULT_CEILING.max_tokens),
+		max_ms: pick(2, DEFAULT_CEILING.max_ms),
+	};
+}
+
+/**
  * Produce interactive-debug launch guidance for a stored failure, or a
  * structured error/unavailable packet. Shared by the CLI and MCP.
  */
 export async function debugGuidance(
 	rawId: string,
 	store: FailsafeStore,
-	opts: { break?: string; port?: number; runtime?: string } = {},
+	opts: { break?: string; port?: number; runtime?: string; budget?: string } = {},
 ): Promise<DebugGuidanceResult> {
 	const fid = resolveId(rawId, store);
 	const failure = fid ? store.getFailure(fid) : null;
@@ -169,6 +221,14 @@ export async function debugGuidance(
 
 	const slice = await extractSourceSlice(breakpoint, 5);
 
+	// Coarse-to-fine action budget (item 42). Built from the stored diagnosis
+	// when one exists so the plan is allocated against real belief rather than
+	// a flat prior; otherwise the leading hypothesis is simply "unknown".
+	const plan = buildDebugPlan({
+		hypotheses: guidanceHypotheses(store.getDiagnosis(failure.failure_id)),
+		ceiling: resolveCeiling(opts.budget),
+	});
+
 	const attachInstruction = isNode
 		? `Attach a DAP client / IDE to 127.0.0.1:${port} (e.g. VS Code 'Node: Attach' or chrome://inspect).`
 		: `Attach a DAP client / IDE to 127.0.0.1:${port} (e.g. VS Code 'Python: Remote Attach').`;
@@ -186,6 +246,19 @@ export async function debugGuidance(
 		note: "Failsafe does not maintain interactive debug sessions across CLI invocations. The 'step' and 'inspect' commands are experimental and only operate within a single process.",
 	};
 	if (slice) data.source_context = slice.text;
+	data.action_budget = {
+		ceiling: plan.ceiling,
+		max_authorized_tier: plan.max_authorized_tier,
+		allocations: plan.allocations,
+		stages: plan.stages.map((s) => ({
+			tier: s.tier,
+			hypothesis_id: s.hypothesis_id,
+			goal: s.goal,
+			cost: s.cost,
+			...(s.gate ? { authorized: s.gate.escalate, gate_reason: s.gate.reason } : {}),
+		})),
+		...(plan.stop_reason ? { stop_reason: plan.stop_reason } : {}),
+	};
 	data.next = [
 		{
 			command: `failsafe diagnose ${failure.failure_id}`,

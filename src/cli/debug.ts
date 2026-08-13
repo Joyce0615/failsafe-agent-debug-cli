@@ -16,6 +16,10 @@ export function registerDebugCommand(program: Command): void {
 		.option("--port <port>", "debugpy listen port", "5678")
 		.option("--quiet", "Emit minified single-line JSON for composable shell usage")
 		.option("--runtime <runtime>", "Override runtime detection: python or node")
+		.option(
+			"--budget <actions[,tokens[,ms]]>",
+			"Action/token/time ceiling for the coarse-to-fine debug plan",
+		)
 		.action(async (rawId: string, opts) => {
 			const { store, outOpts } = initCommand(opts);
 
@@ -23,6 +27,7 @@ export function registerDebugCommand(program: Command): void {
 				break: opts.break,
 				port: Number.parseInt(opts.port, 10),
 				runtime: opts.runtime,
+				budget: opts.budget,
 			});
 
 			outputResult(result.data, outOpts);
