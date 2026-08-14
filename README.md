@@ -260,6 +260,13 @@ low-confidence diagnosis instead of "Unknown failure".
 
 `src/trace/` turns a *retrieved* distributed trace into the same compact diagnosis packet as command output. Adapters normalize Jaeger JSON and OTLP/Tempo JSON into one span model (redacting attributes at ingest), root causes are ranked with the same causal graph used for multi-agent traces, and the packet carries `trace_provenance`. Every query must name a trace id — wildcard/unbounded scans are rejected — and both the lookback window and span count are capped. There is no write path to any backend.
 
+## Benchmarks
+
+`src/bench/` is pure: no dataset is downloaded, because fetching a corpus is a consequential external action. A user exports rows however they obtain them and the adapters map them into a canonical, pinned, versioned shape, so benchmark payloads never enter the repo or a release tar.
+
+- **Matrix** (`manifest.ts`, `runner.ts`) normalizes SWE-bench-debug / SWE-smith / R2E-Gym rows into pinned instances, rejects unpinned commits and floating image tags, and appends results to JSONL so an interrupted sweep resumes instead of re-running.
+- **Service diagnosis** (`service-diagnosis.ts`) scores diagnosing a *running service* across logs, traces, metrics, configuration, and source. Five dimensions are scored **separately** and never combined into one number: component localization (top-1, top-k, MRR, abstention), cause class (scored independently of localization, so "right cause, wrong service" is visible), explanation evidence (precision/recall/F1 with per-artifact recall and a count of citations to artifacts the case never supplied), latency, and cost. Availability slices report accuracy per evidence surface, which is where a system that only really reads logs becomes visible. A case with no prediction is scored as a full abstention rather than skipped.
+
 ## Project memory (opt-in)
 
 `failsafe memory build` indexes the repo's symbols, import graph, and test ownership into `.failsafe/project-index.json`; `memory refresh` re-hashes and rebuilds only what changed; `memory status`/`memory query <id>` inspect it. With `memory.enabled: true` in config, `diagnose` retrieves a byte-budgeted slice keyed by the failure's frames, symbols, and the files recent failed fixes touched, and records the ids/scores in a `retrieval` block. The index stores **no file content** — only paths, symbol names, imports, and hashes — and never indexes `.env*`, key/credential paths, or ignored directories.
