@@ -1,6 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Command } from "commander";
 import {
+	type CalibrationReport,
+	calibrationReport,
+	loadPredictions,
+} from "../diagnosis/calibration.js";
+import {
 	type ClassifierEvaluation,
 	evaluateClassifier,
 	loadDatasetSamples,
@@ -433,6 +438,78 @@ export function registerKbCommand(program: Command): void {
 			});
 
 			if (opts.gate === true && evaluation.verdict !== "classifier_wins") {
+				process.exit(ExitCode.ERROR);
+			}
+		});
+
+	// failsafe kb calibration --predictions <file>
+	kbCmd
+		.command("calibration")
+		.description("Report localization confidence calibration, top-k coverage, and OOD slices")
+		.option(
+			"--predictions <file>",
+			"JSONL of {id, level, confidence, ranked[], truth, slice?}",
+			"predictions.jsonl",
+		)
+		.option("--bins <n>", "Reliability-curve bin count", "10")
+		.option("--gate", "Exit non-zero when confidences are overconfident")
+		.option("--format <format>", "Output format: json or text")
+		.option("--max-bytes <bytes>", "Cap output to this many bytes")
+		.action(async (opts) => {
+			const { store, outOpts } = initCommand(opts);
+			// The corpus comes from a file, not the live store; close it promptly.
+			store.close();
+
+			const file = opts.predictions as string;
+			let jsonl: string;
+			try {
+				jsonl = readFileSync(file, "utf-8");
+			} catch (err) {
+				outputResult(
+					{ error: true, message: `Failed to read predictions: ${(err as Error).message}` },
+					outOpts,
+				);
+				process.exit(ExitCode.NO_INPUT);
+			}
+
+			const predictions = loadPredictions(jsonl);
+			if (predictions.length === 0) {
+				outputResult(
+					{ error: true, message: `No usable localization predictions in ${file}` },
+					outOpts,
+				);
+				process.exit(ExitCode.NO_INPUT);
+			}
+
+			const report = calibrationReport(predictions, {
+				bins: Number.parseInt(opts.bins, 10),
+			});
+
+			outputResult(report as unknown as Record<string, unknown>, outOpts, (d) => {
+				const r = d as CalibrationReport;
+				const lines = [
+					`[CALIBRATION] ${r.samples} prediction(s) -> ${r.verdict}`,
+					`  accuracy: ${(r.overall.accuracy * 100).toFixed(1)}%  ECE: ${r.overall.reliability.expected_calibration_error.toFixed(3)}  MCE: ${r.overall.reliability.maximum_calibration_error.toFixed(3)}  Brier: ${r.overall.reliability.brier_score.toFixed(3)}`,
+					`  MRR: ${r.overall.coverage.mean_reciprocal_rank.toFixed(3)}  recall@1/3/5: ${[1, 3, 5]
+						.map((k) => ((r.overall.coverage.recall_at_k[k] ?? 0) * 100).toFixed(0))
+						.join("/")}%`,
+					`  abstained: ${(r.overall.abstention.abstention_rate * 100).toFixed(1)}%  selective gain: ${(r.overall.abstention.selective_gain * 100).toFixed(1)} pts`,
+				];
+				for (const level of r.by_level) {
+					lines.push(
+						`  ${level.level.padEnd(8)} n=${level.samples} acc=${(level.accuracy * 100).toFixed(0)}% MRR=${level.coverage.mean_reciprocal_rank.toFixed(2)}`,
+					);
+				}
+				for (const slice of r.slices) {
+					lines.push(
+						`  slice ${slice.key}=${slice.value}: n=${slice.samples} acc=${(slice.accuracy * 100).toFixed(0)}% ECE=${slice.expected_calibration_error.toFixed(3)}`,
+					);
+				}
+				lines.push(`  ${r.recommendation}`);
+				return lines.join("\n");
+			});
+
+			if (opts.gate === true && report.verdict === "overconfident") {
 				process.exit(ExitCode.ERROR);
 			}
 		});

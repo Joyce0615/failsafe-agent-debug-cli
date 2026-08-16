@@ -260,6 +260,18 @@ low-confidence diagnosis instead of "Unknown failure".
 
 `src/trace/` turns a *retrieved* distributed trace into the same compact diagnosis packet as command output. Adapters normalize Jaeger JSON and OTLP/Tempo JSON into one span model (redacting attributes at ingest), root causes are ranked with the same causal graph used for multi-agent traces, and the packet carries `trace_provenance`. Every query must name a trace id — wildcard/unbounded scans are rejected — and both the lookback window and span count are capped. There is no write path to any backend.
 
+## Calibration
+
+`failsafe kb calibration --predictions <jsonl>` checks whether a confidence number means anything: of the localizations called 0.8, roughly 80% should be right.
+
+- **Reliability curve** — confidence binned against observed accuracy, with expected (ECE) and maximum (MCE) calibration error, a Brier score, and a signed bias that separates *overconfident* from *underconfident*.
+- **Top-k coverage** — recall@1/3/5 and mean reciprocal rank, reported per granularity (`module`, `file`, `function`, `line`), because a system can be excellent at naming the file and useless at naming the line.
+- **Abstention** — coverage plus the risk on the answered subset, and a *selective gain* figure. Declining to answer is only a virtue if what remains is more accurate; the report says whether it is.
+- **OOD slices** — the same metrics cut by every tag in the data, so an out-of-distribution collapse nobody thought to look for still shows up.
+- **Recalibration** — `fitCalibration()` fits a non-parametric histogram-binning map from raw confidence to observed accuracy. Bins with no data pass through unchanged rather than inventing a correction.
+
+Abstentions are excluded from the reliability curve (a system that declined made no confidence claim), and a verdict is withheld below 30 answered predictions. `--gate` exits non-zero when confidences are overconfident.
+
 ## Benchmarks
 
 `src/bench/` is pure: no dataset is downloaded, because fetching a corpus is a consequential external action. A user exports rows however they obtain them and the adapters map them into a canonical, pinned, versioned shape, so benchmark payloads never enter the repo or a release tar.
