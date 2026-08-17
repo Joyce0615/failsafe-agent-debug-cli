@@ -95,6 +95,21 @@ Override the ceiling with `--budget <actions[,tokens[,ms]]>` (default `24,12000,
 - **Intent-aware.** Hypotheses record where their notion of correct behavior came from (`spec`, `test`, `type`, `invariant`, `docstring`, `commit_message`, `inferred`), and conflicting sources are surfaced rather than silently resolved.
 - **Explicitly abandoned.** A reason is a required argument, not an optional field; the summary lists every dropped hypothesis with why it was dropped.
 
+### Design intent
+
+`failsafe intent <id>` extracts what the code was *supposed* to do from every source that states it, and reports where those sources disagree.
+
+| Source | Read from |
+|--------|-----------|
+| `type` | Python `def f(x: int) -> Optional[str]:` and TypeScript signatures, including parameter types |
+| `spec` | Structured docstring/JSDoc tags: `Returns:`, `Raises:`, `@returns`, `@throws` |
+| `test` | `assert x == y`, `x is None`, `pytest.raises(E)`, `expect(x).toBe(y)`, `.toThrow(E)`, `.toBeNull()` |
+| `invariant` | Runtime guards: `assert x is not None`, `if not x: raise`, `if (!x) throw` |
+
+Statements are normalized into comparable claims (`returns`, `raises`, `nullable`, `param_type`, `equals`) so a type promising `Optional[str]` and a docstring promising `str` register as a conflict. Extraction is conservative — only explicit syntactic forms, never free prose — because a fabricated contract is worse than a missing one.
+
+Conflicts are **surfaced, never resolved**. The report includes an advisory source precedence, but nothing applies it: deciding whether the spec or the test is authoritative is a judgement about what the software is for. `failsafe hypotheses build` attaches the reconciled intent — primary source, location, and every contradicting statement — to the root hypothesis. `--gate` exits non-zero when sources conflict.
+
 ### Tiered Rules
 
 | Command | Description |

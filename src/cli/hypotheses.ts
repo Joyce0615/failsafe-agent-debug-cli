@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import {
+	type Intent,
 	type Observation,
 	abandonHypothesis,
 	buildHypothesisTree,
@@ -7,6 +9,14 @@ import {
 	summarize,
 	validateTree,
 } from "../diagnosis/hypothesis.js";
+import {
+	type IntentInput,
+	extractIntent,
+	intentForSubject,
+	reconcile,
+} from "../diagnosis/intent.js";
+import type { SourceLocation } from "../types/common.js";
+import type { ParsedError } from "../types/failure.js";
 import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
 import { initCommand, resolveFailureOrExit } from "./shared.js";
@@ -15,6 +25,46 @@ function parseUnit(raw: string | undefined, fallback: number): number {
 	if (raw === undefined) return fallback;
 	const n = Number.parseFloat(raw);
 	return Number.isFinite(n) && n >= 0 && n <= 1 ? n : fallback;
+}
+
+function readOrNull(path: string): string | null {
+	try {
+		return readFileSync(path, "utf-8");
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Reconcile design intent for the suspect symbol (item 46) so the hypothesis
+ * tree carries provenance and conflicts rather than a single unattributed
+ * sentence. Returns `null` when neither file is readable — an absent intent is
+ * better than an invented one.
+ */
+function reconcileIntentFor(
+	primary: SourceLocation | undefined,
+	errors: ParsedError[],
+): Intent | null {
+	if (!primary?.symbol) return null;
+	const inputs: IntentInput[] = [];
+
+	const sourceText = readOrNull(primary.file);
+	if (sourceText !== null) {
+		for (const kind of ["type", "spec", "invariant"] as const) {
+			inputs.push({ kind, path: primary.file, text: sourceText, subject: primary.symbol });
+		}
+	}
+	const testFile = errors.find((e) => e.test_file)?.test_file;
+	if (testFile) {
+		const testText = readOrNull(testFile);
+		if (testText !== null) {
+			inputs.push({ kind: "test", path: testFile, text: testText, subject: primary.symbol });
+		}
+	}
+	if (inputs.length === 0) return null;
+
+	const found = intentForSubject(reconcile(extractIntent(inputs)), primary.symbol);
+	return found ? { ...found, conflicts: found.conflicts } : null;
 }
 
 /**
@@ -60,6 +110,14 @@ export function registerHypothesesCommand(program: Command): void {
 				test_name: errors.find((e) => e.test_name)?.test_name,
 				command: repro?.command ?? failure.command,
 			});
+
+			// Replace the placeholder test-derived intent with a reconciled one
+			// (item 46) when the suspect's source and test are readable, so the
+			// tree records both what it assumed and what contradicts it.
+			const reconciled = reconcileIntentFor(failure.primary_location, errors);
+			if (reconciled && tree.hypotheses.length > 0) {
+				tree.hypotheses[0].intent = reconciled;
+			}
 
 			const structural = validateTree(tree);
 			if (tree.hypotheses.length === 0) {
