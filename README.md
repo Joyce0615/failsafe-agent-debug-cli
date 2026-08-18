@@ -271,6 +271,16 @@ output matches **no** parser, a last-resort Drain-style template miner
 candidate, and a stable signature so unknown tools still produce a groupable,
 low-confidence diagnosis instead of "Unknown failure".
 
+## Cross-artifact timeline
+
+`failsafe timeline <id> [--events artifacts.json]` merges command output, test results, traces, configuration changes, diffs, and debugger observations into one ordered timeline, then ranks causes over it. Naively sorting those timestamps produces a confident and wrong story, so the timeline normalizes first:
+
+- **Skew** — each event names the clock that stamped it; offsets are estimated from anchor pairs using a *median*, so one badly matched anchor cannot drag the whole timeline.
+- **Precision** — an event stamped to the second is not comparable to one stamped to the millisecond. Every event carries an uncertainty interval combining its own resolution with the residual error in its clock's offset. An unanchored clock is assumed unskewed and charged ±1s for saying so.
+- **Duplicates** — the same failure reported by both stdout and the test report collapses into one event with an occurrence count and the list of sources that saw it, so blast-radius counts reflect distinct events rather than report counts.
+- **Uncertain ordering** — events whose uncertainty intervals overlap form a *concurrency group*, and no causal edge is drawn within a group. The ranking degrades to "these are independent" rather than inventing a direction out of clock noise.
+- **Redaction** — labels and attributes are redacted at ingest, before fingerprinting, so a secret never enters the timeline.
+
 ## Trace ingestion (read-only)
 
 `src/trace/` turns a *retrieved* distributed trace into the same compact diagnosis packet as command output. Adapters normalize Jaeger JSON and OTLP/Tempo JSON into one span model (redacting attributes at ingest), root causes are ranked with the same causal graph used for multi-agent traces, and the packet carries `trace_provenance`. Every query must name a trace id — wildcard/unbounded scans are rejected — and both the lookback window and span count are capped. There is no write path to any backend.

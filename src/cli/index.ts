@@ -21,6 +21,7 @@ import { registerResolveCommand } from "./resolve.js";
 import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
 import { registerStepCommand } from "./step.js";
+import { registerTimelineCommand } from "./timeline.js";
 import { registerVerifyCommand } from "./verify.js";
 import { registerWatchCommand } from "./watch.js";
 
@@ -63,6 +64,7 @@ registerMemoryCommand(program);
 // Phase 5: Hierarchical hypothesis validation (item 43) and design intent (item 46)
 registerHypothesesCommand(program);
 registerIntentCommand(program);
+registerTimelineCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
