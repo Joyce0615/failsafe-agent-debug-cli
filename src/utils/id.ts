@@ -19,3 +19,8 @@ export function debugId(): string {
 export function learnedRuleId(): string {
 	return `lrule_${nanoid(12)}`;
 }
+
+/** Id for an exported diagnostic bundle (item 49). */
+export function bundleId(): string {
+	return `bundle_${nanoid(12)}`;
+}

@@ -309,6 +309,16 @@ Abstentions are excluded from the reliability curve (a system that declined made
 
 `failsafe memory build` indexes the repo's symbols, import graph, and test ownership into `.failsafe/project-index.json`; `memory refresh` re-hashes and rebuilds only what changed; `memory status`/`memory query <id>` inspect it. With `memory.enabled: true` in config, `diagnose` retrieves a byte-budgeted slice keyed by the failure's frames, symbols, and the files recent failed fixes touched, and records the ids/scores in a `retrieval` block. The index stores **no file content** — only paths, symbol names, imports, and hashes — and never indexes `.env*`, key/credential paths, or ignored directories.
 
+## Bundle exchange
+
+`failsafe bundle export <id> --consent consent.json` and `failsafe bundle import bundles.json` share scrubbed failure/diagnosis/repair findings between workspaces. A bundle is assembled from output, paths, and diffs — exactly where credentials and internal topology live — so the rules are strict:
+
+- **Consent is explicit and per-section.** Export *refuses* rather than trimming when the consent record does not cover a section you asked to share; silently dropping it would leave you believing you had shared something you had not. Import re-checks scope and expiry against its own clock.
+- **Scrubbing is verified at both ends.** Absolute paths become repo-relative, the workspace becomes a salted hash, raw output never travels, volatile literals are normalized so findings group across projects, and every string is secret-redacted. The importer re-runs the scrub check — trusting the sender's scrubbing is not a security model.
+- **Signatures cover canonical JSON.** HMAC-SHA256 over a key-sorted encoding, so re-serialization cannot invalidate a signature and field reordering cannot smuggle a change past one. Keys come from `FAILSAFE_BUNDLE_KEY` and the salt from `FAILSAFE_BUNDLE_SALT` — never a flag, which would put them in shell history and CI logs.
+- **Dedup is by content fingerprint**, not bundle id, so re-sending a finding under a new id cannot inflate its corroboration.
+- **Trust is scored, not assumed.** A bad signature, lapsed consent, or a failed scrub re-check is disqualifying (score 0), not a deduction. Beyond that: a known key id, corroboration by *distinct* origins with diminishing returns, and age decay with a 180-day half-life. Import applies a threshold (default 0.6) and explains every rejection.
+
 ## Security
 
 - **Command policy**: Commands are validated against an allowlist. Shell operators (`&&`, `||`, `;`, `|`) are split and each sub-command is checked. Shell metacharacters (backticks, `$(...)`, `${...}`) are blocked.

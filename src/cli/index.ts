@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
 import { registerApplyCommand } from "./apply.js";
 import { registerAutofixCommand } from "./autofix.js";
+import { registerBundleCommand } from "./bundle.js";
 import { registerCiCommand } from "./ci.js";
 import { registerConfigCommand, registerInitCommand } from "./config.js";
 import { registerDebugCommand } from "./debug.js";
@@ -65,6 +66,7 @@ registerMemoryCommand(program);
 registerHypothesesCommand(program);
 registerIntentCommand(program);
 registerTimelineCommand(program);
+registerBundleCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
