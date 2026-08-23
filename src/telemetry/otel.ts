@@ -14,12 +14,18 @@
  * they are written to a span (item 41), so the span processor's buffer — and
  * therefore every exporter — only ever holds values the policy has cleared.
  */
-import { type Span, SpanStatusCode, type Tracer, trace } from "@opentelemetry/api";
+import { type Span, SpanStatusCode, type Tracer } from "@opentelemetry/api";
 import {
 	type CaptureCounters,
 	applyCapturePolicy,
 	capturePolicySpanAttributes,
 } from "./capture-policy.js";
+import {
+	EXCEPTION_EVENT_NAME,
+	exceptionEvent,
+	genAiResourceAttributes,
+	tracerOptions,
+} from "./genai-schema.js";
 
 let tracer: Tracer | null = null;
 let provider: { forceFlush(): Promise<void>; shutdown(): Promise<void> } | null = null;
@@ -48,9 +54,12 @@ async function ensureInitialized(): Promise<void> {
 			]);
 
 		const exporter = new OTLPTraceExporter();
+		// The resource declares the GenAI schema revision this process emits
+		// under (item 52), so a consumer can tell which conventions produced a
+		// batch even when every span in it has been filtered down to nothing.
 		const resource =
 			typeof resourceMod.resourceFromAttributes === "function"
-				? resourceMod.resourceFromAttributes({ "service.name": "failsafe" })
+				? resourceMod.resourceFromAttributes(genAiResourceAttributes())
 				: undefined;
 
 		const nodeProvider = new NodeTracerProvider({
@@ -59,7 +68,11 @@ async function ensureInitialized(): Promise<void> {
 		});
 		nodeProvider.register();
 		provider = nodeProvider;
-		tracer = trace.getTracer("failsafe", "0.1.0");
+		// `schemaUrl` is the API-level declaration of the conventions revision;
+		// emitting `gen_ai.*` without it forces every consumer to guess. The
+		// tracer comes from the provider rather than the global `trace` proxy
+		// because only `TracerProvider.getTracer` accepts `TracerOptions`.
+		tracer = nodeProvider.getTracer("failsafe", "0.1.0", tracerOptions());
 	} catch {
 		// If the SDK fails to load/init, silently disable telemetry.
 		tracer = null;
@@ -111,6 +124,9 @@ export async function withSpan<T>(
 				code: SpanStatusCode.ERROR,
 				message: err instanceof Error ? err.message : String(err),
 			});
+			// The error is escaping the span's scope, which is a different fact
+			// from "an error was handled here" and is recorded as such.
+			recordExceptionEvent(span, err, { escaped: true });
 			throw err;
 		} finally {
 			applyAttributes(
@@ -164,6 +180,38 @@ export function applyAttributes(span: AttributeSink, attrs: SpanAttributes): Cap
 			span.setAttribute(spanAttributeKey(key), value);
 		}
 	}
+	return counters;
+}
+
+/** Anything that accepts span events. A real `Span` satisfies this. */
+export type EventSink = {
+	addEvent(name: string, attributes?: Record<string, string | number | boolean>): unknown;
+};
+
+/**
+ * The single writer of span events (item 52).
+ *
+ * Events are the second way payload reaches a span processor's buffer, and an
+ * `exception` event carries the two highest-risk strings in the process — the
+ * message and the stack trace. They go through exactly the same capture policy
+ * as attributes, before `addEvent`, so the default `metadata` mode records that
+ * an exception of a given class occurred and nothing about its contents.
+ *
+ * Event attribute keys are emitted verbatim: `exception.*` is a semantic
+ * convention, not a Failsafe field, so namespacing it would be wrong.
+ */
+export function recordExceptionEvent(
+	span: EventSink,
+	error: unknown,
+	opts: { escaped?: boolean } = {},
+): CaptureCounters {
+	const event = exceptionEvent(error, opts);
+	const { attributes, counters } = applyCapturePolicy(event.attributes);
+	const cleared: Record<string, string | number | boolean> = {};
+	for (const [key, value] of Object.entries(attributes)) {
+		if (value !== undefined) cleared[key] = value;
+	}
+	span.addEvent(EXCEPTION_EVENT_NAME, cleared);
 	return counters;
 }
 

@@ -91,6 +91,17 @@ const METADATA_STRING_KEYS: readonly string[] = [
 	"gen_ai.operation.name",
 	"gen_ai.tool.name",
 	"gen_ai.tool.type",
+	// Dedicated GenAI schema (item 52). Every entry here is a pinned constant or
+	// a closed enum. Identifiers (`gen_ai.conversation.id`, `gen_ai.tool.call.id`),
+	// workflow names, and plan ids are deliberately absent: they are unbounded,
+	// caller-supplied strings and must earn `redacted-content` like any other.
+	"gen_ai.schema_url",
+	"gen_ai.agent.name",
+	"gen_ai.agent.version",
+	"genai_span_kind",
+	// An exception's class name is an identifier from the program's own type
+	// space. Its message and stack trace are not, and are absent by design.
+	"exception.type",
 ];
 
 const METADATA_KEY_SET = new Set(METADATA_STRING_KEYS);

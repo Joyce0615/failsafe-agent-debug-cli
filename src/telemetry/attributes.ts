@@ -16,6 +16,7 @@ import type { ParserResult } from "../parsers/types.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 import type { FailureDiagnosis } from "../types/diagnosis.js";
 import type { ReproRecord } from "../types/repro.js";
+import { genAiSpanAttributes } from "./genai-schema.js";
 import type { SpanAttributes } from "./otel.js";
 
 /** Minimal shape of a `CoreError` needed for error-path attribution. */
@@ -72,13 +73,10 @@ export function genAiToolAttributes(
 	usage?: { input_tokens?: number; output_tokens?: number },
 ): SpanAttributes {
 	if (!isGenAiSemconvEnabled()) return {};
-	return {
-		"gen_ai.operation.name": "execute_tool",
-		"gen_ai.tool.name": GEN_AI_TOOL_NAMES[operation],
-		"gen_ai.tool.type": "function",
-		"gen_ai.usage.input_tokens": usage?.input_tokens,
-		"gen_ai.usage.output_tokens": usage?.output_tokens,
-	};
+	// Delegates to the dedicated GenAI schema module (item 52) so attribute
+	// names, the pinned schema URL, and the agent identity live in exactly one
+	// place and cannot drift between call sites as the conventions move.
+	return genAiSpanAttributes({ kind: "tool", target: GEN_AI_TOOL_NAMES[operation], usage });
 }
 
 /** `failsafe.run` — successful capture/parse of a command's output. */
