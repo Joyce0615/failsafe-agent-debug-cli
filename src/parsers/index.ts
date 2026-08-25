@@ -9,6 +9,7 @@ import { biomeParser, eslintParser } from "./linter.js";
 import { mochaParser } from "./mocha.js";
 import { jestParser, jsStackParser, vitestParser } from "./node.js";
 import { pytestParser, pythonTracebackParser } from "./python.js";
+import { hdlSimulationParser, rtlCompilerParser } from "./rtl.js";
 import { rubyParser } from "./ruby.js";
 import { rustParser } from "./rust.js";
 import type { FailureParser, ParserResult } from "./types.js";
@@ -19,6 +20,11 @@ import { tscParser } from "./typescript.js";
  * More specific parsers (pytest, jest, vitest, tsc, eslint, biome) come before
  * generic ones (pythonTracebackParser, jsStackParser) so that when multiple
  * parsers match, the specific ones produce the most useful results first.
+ *
+ * The HDL parsers (item 54) sit after every software parser. They are anchored
+ * on HDL file extensions and cannot match software output, but keeping them
+ * last means the precedence every existing test depends on is unchanged even if
+ * a future pattern here were to widen.
  */
 const ALL_PARSERS: FailureParser[] = [
 	pytestParser,
@@ -35,6 +41,8 @@ const ALL_PARSERS: FailureParser[] = [
 	cppParser,
 	pythonTracebackParser,
 	jsStackParser,
+	hdlSimulationParser,
+	rtlCompilerParser,
 ];
 
 export type DetectOptions = {
