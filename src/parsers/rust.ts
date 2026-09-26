@@ -33,8 +33,14 @@ export const rustParser: FailureParser = {
 		const compilerRegex = /error(\[E\d+\])?:\s*(.+?)\n(?:\s*-->\s*([^\s:]+):(\d+):(\d+))?/g;
 		let cm: RegExpExecArray | null = compilerRegex.exec(combined);
 		while (cm !== null) {
-			// Skip the generic "aborting due to N previous errors" trailer.
-			if (!/aborting due to/.test(cm[2])) {
+			// Skip the generic "aborting due to N previous errors" trailer, and
+			// any diagnostic whose message is empty after trimming. The latter
+			// happens on a truncated line such as `error[E0308]: ` with nothing
+			// after the colon: the lazy `(.+?)` backtracks onto the separating
+			// space and yields a message of "". An error carrying no message at
+			// all is worse than no error, because downstream it is indexed,
+			// counted, and rendered as a blank line that nobody can act on.
+			if (!/aborting due to/.test(cm[2]) && cm[2].trim().length > 0) {
 				errors.push({
 					message: cm[2].trim(),
 					error_type: cm[1] ? cm[1].slice(1, -1) : "CompileError",
