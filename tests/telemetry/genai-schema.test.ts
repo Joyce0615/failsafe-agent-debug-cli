@@ -249,33 +249,40 @@ describe("exception events pass through the capture gate", () => {
 
 describe("single-writer invariant for events", () => {
 	test("addEvent is called from exactly one place in src/", async () => {
+		// Files are read concurrently: the scan grows with the codebase and a
+		// serial read of every source file eventually approaches the test
+		// timeout, which would make this invariant look flaky rather than false.
 		const root = new URL("../../src/", import.meta.url).pathname;
-		const files = new Bun.Glob("**/*.ts").scanSync(root);
+		const files = [...new Bun.Glob("**/*.ts").scanSync(root)];
+		const texts = await Promise.all(files.map((rel) => Bun.file(`${root}${rel}`).text()));
 		const callSites: string[] = [];
-		for (const rel of files) {
-			const text = await Bun.file(`${root}${rel}`).text();
-			for (const [i, line] of text.split("\n").entries()) {
+		files.forEach((rel, index) => {
+			for (const [i, line] of texts[index].split("\n").entries()) {
 				if (/\.addEvent\(/.test(line)) callSites.push(`${rel}:${i + 1}`);
 			}
-		}
+		});
 		expect(callSites).toHaveLength(1);
 		expect(callSites[0]).toStartWith("telemetry/otel.ts:");
 	});
 
 	test("no module outside genai-schema.ts hard-codes a gen_ai attribute name", async () => {
 		const root = new URL("../../src/", import.meta.url).pathname;
-		const files = new Bun.Glob("**/*.ts").scanSync(root);
+		const files = [...new Bun.Glob("**/*.ts").scanSync(root)].filter(
+			(rel) =>
+				rel !== "telemetry/genai-schema.ts" &&
+				// The trace ingest keep-list and the GenAI normalizer read
+				// *incoming* attributes from other producers; neither emits under
+				// our schema.
+				rel !== "trace/normalize.ts" &&
+				rel !== "trace/genai-normalize.ts",
+		);
+		const texts = await Promise.all(files.map((rel) => Bun.file(`${root}${rel}`).text()));
 		const offenders: string[] = [];
-		for (const rel of files) {
-			if (rel === "telemetry/genai-schema.ts") continue;
-			// The trace ingest keep-list reads *incoming* attributes from other
-			// producers; it is not emitting under our schema.
-			if (rel === "trace/normalize.ts") continue;
-			const text = await Bun.file(`${root}${rel}`).text();
-			for (const [i, line] of text.split("\n").entries()) {
+		files.forEach((rel, index) => {
+			for (const [i, line] of texts[index].split("\n").entries()) {
 				if (/"gen_ai\.[a-z_.]+":/.test(line)) offenders.push(`${rel}:${i + 1}`);
 			}
-		}
+		});
 		expect(offenders).toEqual([]);
 	});
 });

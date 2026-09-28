@@ -190,15 +190,18 @@ describe("single-writer invariant", () => {
 	// The policy is only a guarantee if nothing else can write to a span. Lock
 	// that in at the source level so a future call site can't route around it.
 	test("setAttribute is called from exactly one place in src/", async () => {
+		// Read concurrently: a serial scan of every source file grows with the
+		// codebase and would eventually approach the test timeout, making this
+		// invariant look flaky rather than false.
 		const root = new URL("../../src/", import.meta.url).pathname;
-		const files = new Bun.Glob("**/*.ts").scanSync(root);
+		const files = [...new Bun.Glob("**/*.ts").scanSync(root)];
+		const texts = await Promise.all(files.map((rel) => Bun.file(`${root}${rel}`).text()));
 		const callSites: string[] = [];
-		for (const rel of files) {
-			const text = await Bun.file(`${root}${rel}`).text();
-			for (const [i, line] of text.split("\n").entries()) {
+		files.forEach((rel, index) => {
+			for (const [i, line] of texts[index].split("\n").entries()) {
 				if (/\.setAttribute\(/.test(line)) callSites.push(`${rel}:${i + 1}`);
 			}
-		}
+		});
 		expect(callSites).toHaveLength(1);
 		expect(callSites[0]).toStartWith("telemetry/otel.ts:");
 	});
