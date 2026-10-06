@@ -262,6 +262,34 @@ export const MIGRATIONS: Migration[] = [
 			CREATE INDEX IF NOT EXISTS idx_hypotheses_parent ON hypotheses(parent_id);
 		`,
 	},
+	{
+		version: 9,
+		name: "remediation_runs",
+		up: `
+			CREATE TABLE IF NOT EXISTS remediation_runs (
+				run_id TEXT PRIMARY KEY,
+				failure_id TEXT NOT NULL,
+				phase TEXT NOT NULL
+					CHECK (phase IN ('detect', 'attribute', 'recover', 'rerun', 'done')),
+				status TEXT NOT NULL
+					CHECK (status IN ('in_progress', 'fixed', 'flaky_refused', 'no_fix',
+						'fix_ineffective', 'exhausted', 'rerun_error', 'requires_review')),
+				max_attempts INTEGER NOT NULL,
+				attempts TEXT NOT NULL DEFAULT '[]',
+				tried_fix_keys TEXT NOT NULL DEFAULT '[]',
+				message TEXT,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_remediation_runs_failure
+				ON remediation_runs(failure_id, created_at DESC);
+
+			CREATE INDEX IF NOT EXISTS idx_remediation_runs_in_progress
+				ON remediation_runs(failure_id, status)
+				WHERE status = 'in_progress';
+		`,
+	},
 ];
 
 export function runMigrations(db: Database): void {

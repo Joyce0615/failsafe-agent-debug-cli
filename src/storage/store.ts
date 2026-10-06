@@ -7,6 +7,7 @@ import { resolveConfigPaths } from "../types/config.js";
 import type { DebugSession } from "../types/debug.js";
 import type { FailureDiagnosis } from "../types/diagnosis.js";
 import type { FailureRecord } from "../types/failure.js";
+import type { RemediationRun } from "../types/remediation.js";
 import type { FailureSignature, ReproRecord } from "../types/repro.js";
 import { FailsafeFiles } from "./files.js";
 import { FailsafeSqlite } from "./sqlite.js";
@@ -356,6 +357,29 @@ export class FailsafeStore {
 	/** Loads the stored hypothesis tree for a failure, or `null`. */
 	getHypotheses(failureId: string): HypothesisTree | null {
 		return this.sqlite.getHypotheses(failureId);
+	}
+
+	/** Durably persist a brand-new Detect→Attribute→Recover→Rerun run (item 96). */
+	insertRemediationRun(run: RemediationRun): void {
+		this.sqlite.insertRemediationRun(run);
+	}
+
+	/** Durably persist a phase/status/attempts transition for an existing run. */
+	updateRemediationRun(run: RemediationRun): void {
+		this.sqlite.updateRemediationRun(run);
+	}
+
+	getRemediationRun(runId: string): RemediationRun | null {
+		return this.sqlite.getRemediationRun(runId);
+	}
+
+	/** The resume source for crash recovery: the latest still-open run, if any. */
+	getInProgressRemediationRun(failureId: string): RemediationRun | null {
+		return this.sqlite.getInProgressRemediationRun(failureId);
+	}
+
+	listRemediationRuns(failureId: string): RemediationRun[] {
+		return this.sqlite.listRemediationRuns(failureId);
 	}
 
 	/**

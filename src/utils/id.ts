@@ -24,3 +24,8 @@ export function learnedRuleId(): string {
 export function bundleId(): string {
 	return `bundle_${nanoid(12)}`;
 }
+
+/** Id for a durable Detect→Attribute→Recover→Rerun remediation run (item 96). */
+export function remediationRunId(): string {
+	return `rr_${nanoid(12)}`;
+}

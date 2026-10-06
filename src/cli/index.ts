@@ -17,6 +17,7 @@ import { registerInspectCommand } from "./inspect.js";
 import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
 import { registerMemoryCommand } from "./memory.js";
+import { registerRemediateCommand } from "./remediate.js";
 import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
 import { registerRulesCommand } from "./rules.js";
@@ -52,6 +53,7 @@ registerExplainCommand(program);
 registerDumpCommand(program);
 registerApplyCommand(program);
 registerAutofixCommand(program);
+registerRemediateCommand(program);
 registerWatchCommand(program);
 
 // Phase 3: Tiered Rules

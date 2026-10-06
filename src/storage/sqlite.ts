@@ -6,6 +6,7 @@ import { SCHEMA_VERSION } from "../types/common.js";
 import type { DebugSession } from "../types/debug.js";
 import type { FailureDiagnosis } from "../types/diagnosis.js";
 import type { FailureRecord, ParsedFailure } from "../types/failure.js";
+import type { RemediationRun } from "../types/remediation.js";
 import type { FailureSignature, ReproRecord } from "../types/repro.js";
 import { runMigrations } from "./migrations.js";
 
@@ -805,6 +806,108 @@ export class FailsafeSqlite {
 		};
 	}
 
+	// --------------- Remediation runs (item 96) ---------------
+
+	/**
+	 * Insert a brand-new remediation run (phase `detect`, status `in_progress`).
+	 * A run id is caller-supplied so the caller can log/reference it before the
+	 * row exists.
+	 */
+	insertRemediationRun(run: RemediationRun): void {
+		this.db.run(
+			`INSERT INTO remediation_runs (
+				run_id, failure_id, phase, status, max_attempts, attempts,
+				tried_fix_keys, message, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			[
+				run.run_id,
+				run.failure_id,
+				run.phase,
+				run.status,
+				run.max_attempts,
+				JSON.stringify(run.attempts),
+				JSON.stringify(run.tried_fix_keys),
+				run.message ?? null,
+				run.created_at,
+				run.updated_at,
+			],
+		);
+	}
+
+	/**
+	 * Overwrite the mutable fields of an existing run (phase/status/attempts/
+	 * tried_fix_keys/message/updated_at). Called after every phase transition
+	 * so the row on disk always reflects "what durably happened", never an
+	 * in-memory-only intermediate state.
+	 */
+	updateRemediationRun(run: RemediationRun): void {
+		this.db.run(
+			`UPDATE remediation_runs
+				SET phase = ?, status = ?, attempts = ?, tried_fix_keys = ?,
+					message = ?, updated_at = ?
+				WHERE run_id = ?`,
+			[
+				run.phase,
+				run.status,
+				JSON.stringify(run.attempts),
+				JSON.stringify(run.tried_fix_keys),
+				run.message ?? null,
+				run.updated_at,
+				run.run_id,
+			],
+		);
+	}
+
+	getRemediationRun(runId: string): RemediationRun | null {
+		const row = this.db
+			.query("SELECT * FROM remediation_runs WHERE run_id = ?")
+			.get(runId) as RemediationRunRow | null;
+		if (!row) return null;
+		return this.rowToRemediationRun(row);
+	}
+
+	/**
+	 * The most recent still-`in_progress` run for a failure, if any — the
+	 * resume source for crash recovery. At most one should exist at a time
+	 * (the caller is expected to finalize a run before starting another for the
+	 * same failure), but `ORDER BY ... LIMIT 1` makes a stray duplicate
+	 * harmless rather than ambiguous.
+	 */
+	getInProgressRemediationRun(failureId: string): RemediationRun | null {
+		const row = this.db
+			.query(
+				`SELECT * FROM remediation_runs
+					WHERE failure_id = ? AND status = 'in_progress'
+					ORDER BY created_at DESC LIMIT 1`,
+			)
+			.get(failureId) as RemediationRunRow | null;
+		if (!row) return null;
+		return this.rowToRemediationRun(row);
+	}
+
+	/** Every run recorded for a failure, newest first. */
+	listRemediationRuns(failureId: string): RemediationRun[] {
+		const rows = this.db
+			.query("SELECT * FROM remediation_runs WHERE failure_id = ? ORDER BY created_at DESC")
+			.all(failureId) as RemediationRunRow[];
+		return rows.map((row) => this.rowToRemediationRun(row));
+	}
+
+	private rowToRemediationRun(row: RemediationRunRow): RemediationRun {
+		return {
+			run_id: row.run_id,
+			failure_id: row.failure_id,
+			phase: row.phase as RemediationRun["phase"],
+			status: row.status as RemediationRun["status"],
+			max_attempts: row.max_attempts,
+			attempts: safeJsonParse(row.attempts, []),
+			tried_fix_keys: safeJsonParse(row.tried_fix_keys, []),
+			...(row.message ? { message: row.message } : {}),
+			created_at: row.created_at,
+			updated_at: row.updated_at,
+		};
+	}
+
 	// --------------- Lifecycle ---------------
 
 	close(): void {
@@ -1158,6 +1261,19 @@ interface FixAttemptRow {
 	outcome: string;
 	detail: string | null;
 	files_changed: string | null;
+}
+
+interface RemediationRunRow {
+	run_id: string;
+	failure_id: string;
+	phase: string;
+	status: string;
+	max_attempts: number;
+	attempts: string;
+	tried_fix_keys: string;
+	message: string | null;
+	created_at: string;
+	updated_at: string;
 }
 
 interface FlakyRow {
