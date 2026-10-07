@@ -5,11 +5,14 @@ import {
 	type AttributionDomain,
 	type AttributionPrediction,
 	AttributionCaseSchema,
+	DEFAULT_LATENCY_BUDGET_MS,
 	DEFAULT_STEP_TOLERANCE,
+	DEFAULT_TOP_K_AGENT,
 	LIFT_TOLERANCE,
 	attributionReport,
 	firstErrorBaseline,
 	fromTrajectoryRows,
+	generateAttributionCorpus,
 	lastStepBaseline,
 	scoreAttribution,
 	scoreCases,
@@ -376,5 +379,172 @@ describe("row adapter", () => {
 
 	test("every fixture domain is representable", () => {
 		expect(ATTRIBUTION_DOMAINS).toEqual(["api", "incident", "web_file"]);
+	});
+});
+
+describe("false blame", () => {
+	test("naming the wrong agent is false blame; declining to answer is not", () => {
+		const c = apiCase();
+		const wronglyBlamed = scoreAttribution(c, { ...perfect(c), agent: "caller" });
+		const abstained = scoreAttribution(c, { case_id: c.case_id, cited_steps: [] });
+		expect(wronglyBlamed.agent.false_blame).toBe(true);
+		expect(abstained.agent.false_blame).toBe(false);
+	});
+
+	test("correctly naming the agent is never false blame", () => {
+		const c = apiCase();
+		expect(scoreAttribution(c, perfect(c)).agent.false_blame).toBe(false);
+	});
+
+	test("false_blame_rate is reported separately from abstention_rate", () => {
+		const c = apiCase();
+		const scores = [
+			scoreAttribution(c, { ...perfect(c), agent: "caller" }),
+			scoreAttribution(c, { case_id: c.case_id, cited_steps: [] }),
+			scoreAttribution(c, perfect(c)),
+		];
+		const summary = summarizeScores(scores);
+		expect(summary.false_blame_rate).toBeCloseTo(1 / 3, 10);
+		expect(summary.abstention_rate).toBeCloseTo(1 / 3, 10);
+	});
+
+	test("a baseline that always blames someone has a nonzero false-blame rate on cases it gets wrong", () => {
+		const wrongStep = { ...endLoadedCase("fb-1"), steps: endLoadedCase("fb-1").steps };
+		// first-error baseline will blame the triage agent at step 0, but truth is responder at step 2
+		wrongStep.ground_truth = { ...wrongStep.ground_truth, agent: "triage", step_index: 0 };
+		const score = scoreAttribution(wrongStep, lastStepBaseline(wrongStep));
+		// last-step baseline on an end-loaded-but-mislabeled case blames "responder" when truth is "triage"
+		expect(score.agent.false_blame).toBe(true);
+	});
+});
+
+describe("top-k ranked attribution", () => {
+	function ranked(c: AttributionCase, agents: string[]): AttributionPrediction {
+		return { ...perfect(c), agent: undefined, candidate_agents: agents };
+	}
+
+	test("the truth in first place scores top-1 and top-k", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, ranked(c, ["planner", "caller", "retriever"]));
+		expect(s.agent.top1).toBe(true);
+		expect(s.agent.topk).toBe(true);
+		expect(s.agent.rank).toBe(0);
+	});
+
+	test("the truth further down the ranking scores top-k but not top-1", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, ranked(c, ["caller", "planner", "retriever"]), { top_k: 3 });
+		expect(s.agent.top1).toBe(false);
+		expect(s.agent.topk).toBe(true);
+		expect(s.agent.rank).toBe(1);
+	});
+
+	test("the truth outside the configured k is neither top-1 nor top-k", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, ranked(c, ["caller", "retriever", "planner"]), { top_k: 2 });
+		expect(s.agent.topk).toBe(false);
+		expect(s.agent.rank).toBe(2);
+	});
+
+	test("the truth missing from the candidate list is unranked, not a crash", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, ranked(c, ["caller", "retriever"]));
+		expect(s.agent.rank).toBeNull();
+		expect(s.agent.top1).toBe(false);
+		expect(s.agent.topk).toBe(false);
+	});
+
+	test("a single `agent` field still works as a rank-1 candidate list of one (backward compatible)", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, perfect(c));
+		expect(s.agent.rank).toBe(0);
+		expect(s.agent.top1).toBe(true);
+	});
+
+	test("the default top-k matches the documented constant", () => {
+		expect(DEFAULT_TOP_K_AGENT).toBe(3);
+	});
+
+	test("summarized metrics report mean reciprocal rank and a top-k accuracy", () => {
+		const c = apiCase();
+		const scores = [
+			scoreAttribution(c, ranked(c, ["planner", "caller"])),
+			scoreAttribution(c, ranked(c, ["caller", "planner"])),
+		];
+		const summary = summarizeScores(scores);
+		expect(summary.agent_top1_accuracy).toBeCloseTo(0.5, 10);
+		expect(summary.agent_topk_accuracy).toBe(1);
+		expect(summary.agent_mean_reciprocal_rank).toBeCloseTo((1 + 0.5) / 2, 10);
+	});
+});
+
+describe("latency", () => {
+	test("latency within budget is reported as such, with utilization", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, { ...perfect(c), latency_ms: 500 }, { latency_budget_ms: 1000 });
+		expect(s.latency.within_budget).toBe(true);
+		expect(s.latency.utilization).toBeCloseTo(0.5, 10);
+	});
+
+	test("latency over budget is flagged, independent of correctness", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, { ...perfect(c), latency_ms: 5000 }, { latency_budget_ms: 1000 });
+		expect(s.latency.within_budget).toBe(false);
+		expect(s.joint_correct).toBe(true);
+	});
+
+	test("a prediction with no latency reported defaults to zero, not a crash", () => {
+		const c = apiCase();
+		const s = scoreAttribution(c, perfect(c));
+		expect(s.latency.value).toBe(0);
+		expect(s.latency.within_budget).toBe(true);
+	});
+
+	test("the default latency budget matches the documented constant", () => {
+		expect(DEFAULT_LATENCY_BUDGET_MS).toBe(30_000);
+	});
+
+	test("summarized metrics report mean, median, and within-budget rate", () => {
+		const c = apiCase();
+		const scores = [
+			scoreAttribution(c, { ...perfect(c), latency_ms: 1_000 }),
+			scoreAttribution(c, { ...perfect(c), latency_ms: 9_000 }, { latency_budget_ms: 5_000 }),
+		];
+		const summary = summarizeScores(scores);
+		expect(summary.latency.mean_ms).toBe(5_000);
+		expect(summary.latency.median_ms).toBe(5_000);
+		expect(summary.latency.within_budget_rate).toBe(0.5);
+	});
+});
+
+describe("seeded synthetic corpus", () => {
+	test("the same seed produces an identical corpus", () => {
+		const a = generateAttributionCorpus({ seed: 42, cases: 10 });
+		const b = generateAttributionCorpus({ seed: 42, cases: 10 });
+		expect(a).toEqual(b);
+	});
+
+	test("different seeds produce different corpora", () => {
+		const a = generateAttributionCorpus({ seed: 1, cases: 10 });
+		const b = generateAttributionCorpus({ seed: 2, cases: 10 });
+		expect(a).not.toEqual(b);
+	});
+
+	test("every generated case is well-formed and passes validation", () => {
+		const corpus = generateAttributionCorpus({ seed: 7, cases: 25 });
+		expect(corpus.cases).toHaveLength(25);
+		expect(validateCases(corpus.cases)).toEqual([]);
+	});
+
+	test("every requested domain is represented in a large enough corpus", () => {
+		const corpus = generateAttributionCorpus({ seed: 3, cases: 60 });
+		const domains = new Set(corpus.cases.map((c) => c.domain));
+		expect(domains).toEqual(new Set(ATTRIBUTION_DOMAINS));
+	});
+
+	test("seeded failures can be scored end-to-end through attributionReport", () => {
+		const corpus = generateAttributionCorpus({ seed: 11, cases: 15 });
+		const report = attributionReport(corpus.cases, corpus.cases.map(lastStepBaseline));
+		expect(report.system.cases).toBe(15);
 	});
 });

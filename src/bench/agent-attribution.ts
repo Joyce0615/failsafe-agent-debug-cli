@@ -8,15 +8,24 @@
  * the right agent and the wrong step, or the right step for reasons it cannot
  * evidence.
  *
- * Four axes are scored separately:
+ * Axes are scored separately:
  *
- * 1. **Agent** — which agent is blamed.
+ * 1. **Agent** — which agent is blamed. Supports both a single guess and a
+ *    ranked candidate list, so strict (top-1) and top-k attribution are both
+ *    measurable from the same prediction shape.
  * 2. **Step** — exact index, plus a tolerance band and the signed distance, so
  *    "off by one" and "off by forty" are not the same result.
- * 3. **Evidence sufficiency** — whether the cited steps actually contain the
+ * 3. **False blame** — naming the *wrong* agent is scored separately from
+ *    declining to answer. A system that confidently accuses an innocent agent
+ *    is more dangerous than one that abstains, and collapsing the two into one
+ *    "accuracy" number hides exactly the failure mode this benchmark exists to
+ *    catch.
+ * 4. **Latency** — wall time against a per-call budget, reported independently
+ *    of correctness so a system cannot look fast by being wrong quickly.
+ * 5. **Evidence sufficiency** — whether the cited steps actually contain the
  *    antecedents the ground truth says are needed. A correct attribution with
  *    insufficient evidence is a lucky guess, and is labelled as one.
- * 4. **Recovery** — the recommended action, from a controlled vocabulary.
+ * 6. **Recovery** — the recommended action, from a controlled vocabulary.
  *
  * The report always includes two **trivial baselines**: blame the last step,
  * and blame the first step that reported an error. Long-horizon trajectories
@@ -24,9 +33,14 @@
  * the last step" is measuring the corpus, not the system. Reporting the
  * baselines next to the system is the point.
  *
+ * `generateAttributionCorpus` produces a reproducible corpus of *seeded*
+ * failures — trajectories built from a deterministic PRNG so a reported score
+ * can be replayed from an integer rather than from a captured fixture file.
+ *
  * Pure: no network, no dataset download, no clock.
  */
 import { z } from "zod";
+import { mulberry32, pick, randomInt } from "../utils/random.js";
 
 /** Fixture families an attribution corpus is drawn from. */
 export const ATTRIBUTION_DOMAINS = ["api", "incident", "web_file"] as const;
@@ -78,22 +92,64 @@ export type AttributionCase = z.infer<typeof AttributionCaseSchema>;
 
 export const AttributionPredictionSchema = z.object({
 	case_id: z.string().min(1),
-	/** Absent means the system declined to attribute. */
+	/**
+	 * Absent means the system declined to attribute. When `candidate_agents` is
+	 * also absent, this single guess is treated as a rank-1 candidate list of
+	 * one — strict (top-1) attribution is top-k attribution with `k = 1`.
+	 */
 	agent: z.string().optional(),
+	/** Ranked candidates, best-first, for top-k agent attribution. */
+	candidate_agents: z.array(z.string()).optional(),
 	step_index: z.number().int().nonnegative().optional(),
 	cited_steps: z.array(z.number().int().nonnegative()).default([]),
 	recovery: RecoveryActionSchema.optional(),
+	/** Wall time for the attribution call. Absent/omitted means zero. */
+	latency_ms: z.number().nonnegative().default(0),
 });
-export type AttributionPrediction = z.infer<typeof AttributionPredictionSchema>;
+/**
+ * The *input* shape, not the parsed output: callers (baselines, tests,
+ * `fromTrajectoryRows` consumers) build these by hand and should not have to
+ * spell out every defaulted field. `scoreAttribution` treats every default
+ * itself rather than relying on `.parse` having run.
+ */
+export type AttributionPrediction = z.input<typeof AttributionPredictionSchema>;
 
 /** Steps either side of the truth that still count as located. */
 export const DEFAULT_STEP_TOLERANCE = 1;
+
+/** Default k for top-k agent attribution. */
+export const DEFAULT_TOP_K_AGENT = 3;
+
+/** Default per-case latency budget, in milliseconds. */
+export const DEFAULT_LATENCY_BUDGET_MS = 30_000;
 
 export type AgentScore = {
 	correct: boolean;
 	predicted?: string;
 	expected: string;
 	abstained: boolean;
+	/**
+	 * The system named an agent and it was the wrong one. Distinct from
+	 * `abstained`: declining to answer is safe, confidently accusing an
+	 * innocent agent is not, and an "accuracy" number that treats them alike
+	 * cannot tell a cautious system from a reckless one.
+	 */
+	false_blame: boolean;
+	/** True agent's 0-based position in `candidate_agents`, or `null` if absent/unranked. */
+	rank: number | null;
+	/** Truth is the top-ranked candidate. Equivalent to `correct` for a single guess. */
+	top1: boolean;
+	/** Truth is within the configured top-k. */
+	topk: boolean;
+	k: number;
+};
+
+export type LatencyScore = {
+	value: number;
+	budget: number;
+	within_budget: boolean;
+	/** Fraction of the budget consumed; >1 means overrun. */
+	utilization: number;
 };
 
 export type StepScore = {
@@ -139,22 +195,37 @@ export type AttributionScore = {
 	joint_supported: boolean;
 	evidence: EvidenceSufficiency;
 	recovery: RecoveryScore;
+	latency: LatencyScore;
 };
 
 export function scoreAttribution(
 	testCase: AttributionCase,
 	prediction: AttributionPrediction,
-	opts: { tolerance?: number } = {},
+	opts: { tolerance?: number; top_k?: number; latency_budget_ms?: number } = {},
 ): AttributionScore {
 	const tolerance = opts.tolerance ?? DEFAULT_STEP_TOLERANCE;
+	const topK = opts.top_k ?? DEFAULT_TOP_K_AGENT;
+	const latencyBudget = opts.latency_budget_ms ?? DEFAULT_LATENCY_BUDGET_MS;
 	const truth = testCase.ground_truth;
 	const lastIndex = testCase.steps.length - 1;
 
+	// A single `agent` guess is a rank-1 candidate list of one; an explicit
+	// `candidate_agents` list takes precedence when both are given.
+	const candidates =
+		prediction.candidate_agents ?? (prediction.agent !== undefined ? [prediction.agent] : []);
+	const rank = candidates.indexOf(truth.agent);
+	const agentAbstained = candidates.length === 0;
+	const topAgent = candidates[0];
 	const agent: AgentScore = {
-		correct: prediction.agent === truth.agent,
-		...(prediction.agent ? { predicted: prediction.agent } : {}),
+		correct: topAgent === truth.agent,
+		...(topAgent !== undefined ? { predicted: topAgent } : {}),
 		expected: truth.agent,
-		abstained: prediction.agent === undefined,
+		abstained: agentAbstained,
+		false_blame: !agentAbstained && topAgent !== truth.agent,
+		rank: rank >= 0 ? rank : null,
+		top1: rank === 0,
+		topk: rank >= 0 && rank < topK,
+		k: topK,
 	};
 
 	const stepAbstained = prediction.step_index === undefined;
@@ -195,6 +266,14 @@ export function scoreAttribution(
 		abstained: prediction.recovery === undefined,
 	};
 
+	const latencyMs = prediction.latency_ms ?? 0;
+	const latency: LatencyScore = {
+		value: latencyMs,
+		budget: latencyBudget,
+		within_budget: latencyMs <= latencyBudget,
+		utilization: latencyBudget > 0 ? latencyMs / latencyBudget : Number.POSITIVE_INFINITY,
+	};
+
 	const jointCorrect = agent.correct && step.exact;
 	return {
 		case_id: testCase.case_id,
@@ -205,6 +284,7 @@ export function scoreAttribution(
 		joint_supported: jointCorrect && evidence.sufficient,
 		evidence,
 		recovery,
+		latency,
 	};
 }
 
@@ -246,9 +326,22 @@ function mean(values: number[]): number {
 	return values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length;
 }
 
+/** Median is reported alongside the mean because latency distributions are skewed. */
+function median(values: number[]): number {
+	if (values.length === 0) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
 export type AttributionMetrics = {
 	cases: number;
 	agent_accuracy: number;
+	/** Truth is the top-ranked candidate. Equal to `agent_accuracy` for a single guess. */
+	agent_top1_accuracy: number;
+	/** Truth is within the configured top-k. */
+	agent_topk_accuracy: number;
+	agent_mean_reciprocal_rank: number;
 	step_exact_accuracy: number;
 	step_within_tolerance: number;
 	mean_absolute_step_distance: number;
@@ -259,7 +352,10 @@ export type AttributionMetrics = {
 	mean_evidence_precision: number;
 	recovery_accuracy: number;
 	abstention_rate: number;
+	/** Named a wrong agent rather than declining. See `AgentScore.false_blame`. */
+	false_blame_rate: number;
 	out_of_range_citations: number;
+	latency: { mean_ms: number; median_ms: number; within_budget_rate: number };
 };
 
 export function summarizeScores(scores: AttributionScore[]): AttributionMetrics {
@@ -267,6 +363,11 @@ export function summarizeScores(scores: AttributionScore[]): AttributionMetrics 
 	return {
 		cases: scores.length,
 		agent_accuracy: mean(scores.map((s) => (s.agent.correct ? 1 : 0))),
+		agent_top1_accuracy: mean(scores.map((s) => (s.agent.top1 ? 1 : 0))),
+		agent_topk_accuracy: mean(scores.map((s) => (s.agent.topk ? 1 : 0))),
+		agent_mean_reciprocal_rank: mean(
+			scores.map((s) => (s.agent.rank !== null ? 1 / (s.agent.rank + 1) : 0)),
+		),
 		step_exact_accuracy: mean(scores.map((s) => (s.step.exact ? 1 : 0))),
 		step_within_tolerance: mean(scores.map((s) => (s.step.within_tolerance ? 1 : 0))),
 		mean_absolute_step_distance: mean(located.map((s) => Math.abs(s.step.distance as number))),
@@ -276,7 +377,13 @@ export function summarizeScores(scores: AttributionScore[]): AttributionMetrics 
 		mean_evidence_precision: mean(scores.map((s) => s.evidence.precision)),
 		recovery_accuracy: mean(scores.map((s) => (s.recovery.correct ? 1 : 0))),
 		abstention_rate: mean(scores.map((s) => (s.step.abstained || s.agent.abstained ? 1 : 0))),
+		false_blame_rate: mean(scores.map((s) => (s.agent.false_blame ? 1 : 0))),
 		out_of_range_citations: scores.reduce((a, s) => a + s.evidence.out_of_range_citations, 0),
+		latency: {
+			mean_ms: mean(scores.map((s) => s.latency.value)),
+			median_ms: median(scores.map((s) => s.latency.value)),
+			within_budget_rate: mean(scores.map((s) => (s.latency.within_budget ? 1 : 0))),
+		},
 	};
 }
 
@@ -442,4 +549,100 @@ export function fromTrajectoryRows(rows: Row[]): AttributionCase[] {
 		if (parsed.success) cases.push(parsed.data);
 	}
 	return cases;
+}
+
+/** Agent pools per domain, used only by the synthetic corpus generator. */
+const DOMAIN_AGENTS: Record<AttributionDomain, readonly string[]> = {
+	api: ["planner", "retriever", "caller"],
+	incident: ["triage", "responder", "verifier"],
+	web_file: ["browser", "writer", "reviewer"],
+};
+
+const DOMAIN_ACTIONS: Record<AttributionDomain, readonly string[]> = {
+	api: ["plan", "fetch schema", "select id", "call endpoint", "parse response"],
+	incident: ["read alert", "query metrics", "restart service", "roll back", "page on-call"],
+	web_file: ["open page", "extract field", "save file", "diff result", "notify reviewer"],
+};
+
+export type AttributionCorpusOptions = {
+	seed: number;
+	cases: number;
+	/** Trajectory length is drawn uniformly from this inclusive range. */
+	min_steps?: number;
+	max_steps?: number;
+};
+
+export const DEFAULT_ATTRIBUTION_CORPUS_OPTIONS: Required<
+	Omit<AttributionCorpusOptions, "seed" | "cases">
+> = {
+	min_steps: 3,
+	max_steps: 8,
+};
+
+export type AttributionCorpus = {
+	seed: number;
+	cases: AttributionCase[];
+};
+
+/**
+ * Generate a reproducible corpus of seeded agent-failure trajectories.
+ *
+ * Every trajectory fails at a step the generator chooses and remembers, so
+ * `ground_truth` is exact by construction rather than hand-labelled. Domains
+ * cycle round-robin so a large enough corpus always represents all three, and
+ * every case is run through the same step-index/evidence-step invariants
+ * `validateCases` checks, so a generated corpus never silently produces an
+ * unscorable case.
+ */
+export function generateAttributionCorpus(options: AttributionCorpusOptions): AttributionCorpus {
+	const opts = { ...DEFAULT_ATTRIBUTION_CORPUS_OPTIONS, ...options };
+	const rand = mulberry32(opts.seed);
+	const cases: AttributionCase[] = [];
+
+	for (let i = 0; i < opts.cases; i++) {
+		const domain = ATTRIBUTION_DOMAINS[i % ATTRIBUTION_DOMAINS.length];
+		const agents = DOMAIN_AGENTS[domain];
+		const actions = DOMAIN_ACTIONS[domain];
+		const length = randomInt(rand, opts.min_steps, opts.max_steps);
+
+		// The failure is introduced at some step and surfaces at or after it —
+		// the shape that defeats a last-step/first-error baseline unless the
+		// two happen to coincide.
+		const introducedAt = randomInt(rand, 0, length - 1);
+		const surfacesAt = randomInt(rand, introducedAt, length - 1);
+		const introducingAgent = pick(rand, agents);
+
+		const steps: AttributionStep[] = [];
+		for (let index = 0; index < length; index++) {
+			const agent = index === introducedAt ? introducingAgent : pick(rand, agents);
+			steps.push({
+				index,
+				agent,
+				action: pick(rand, actions),
+				observation: "",
+				ok: index !== surfacesAt,
+			});
+		}
+
+		// Evidence is the introducing step plus the surfacing step (when they
+		// differ) — the minimal antecedent chain a sufficient explanation needs.
+		const evidenceSteps = Array.from(new Set([introducedAt, surfacesAt])).sort((a, b) => a - b);
+		const recovery = pick(rand, RECOVERY_ACTIONS);
+
+		cases.push(
+			AttributionCaseSchema.parse({
+				case_id: `gen_${opts.seed}_${String(i).padStart(4, "0")}`,
+				domain,
+				steps,
+				ground_truth: {
+					agent: introducingAgent,
+					step_index: introducedAt,
+					evidence_steps: evidenceSteps,
+					recovery,
+				},
+			}),
+		);
+	}
+
+	return { seed: opts.seed, cases };
 }
