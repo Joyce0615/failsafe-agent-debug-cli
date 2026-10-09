@@ -97,6 +97,18 @@ async function analyzeCommandImpl(
 	store: FailsafeStore,
 	opts: { timeoutMs?: number; shell?: boolean; noPolicy?: boolean } = {},
 ): Promise<CoreResult<Record<string, unknown>>> {
+	// The command LINE ITSELF, not just captured stdout/stderr, is a common
+	// place for a secret to appear: `GITHUB_TOKEN=ghp_... npm test` is a
+	// completely normal way to invoke a command, and until here it was
+	// returned in the JSON response and written verbatim into the persisted
+	// FailureRecord, bypassing the output redaction below entirely. Build the
+	// display/storage form up front so every return path (policy block,
+	// needs-shell, success) uses it (item 5). `security.redact_env` defaults
+	// to true; execution below still uses the raw `command` so the actual
+	// subprocess still sees real credentials.
+	const commandForDisplay =
+		config.security.redact_env === false ? command : redactSecrets(command).redacted;
+
 	// Policy check
 	if (!opts.noPolicy) {
 		const policy = loadPolicy(config);
@@ -108,7 +120,7 @@ async function analyzeCommandImpl(
 					error: true,
 					exit_code: ExitCode.POLICY_BLOCK,
 					message: `Command blocked by policy: ${validation.reason}`,
-					command,
+					command: commandForDisplay,
 				},
 			};
 		}
@@ -128,7 +140,7 @@ async function analyzeCommandImpl(
 					exit_code: ExitCode.ERROR,
 					needs_shell: true,
 					message: `${parsed.reason}. Use shell mode to allow shell syntax, or simplify the command.`,
-					command,
+					command: commandForDisplay,
 				},
 			};
 		}
@@ -140,7 +152,8 @@ async function analyzeCommandImpl(
 	const { redacted: redactedStdout, matched: stdoutMatches } = redactSecrets(result.stdout);
 	const { redacted: redactedStderr, matched: stderrMatches } = redactSecrets(result.stderr);
 	const { redacted: redactedCombined } = redactSecrets(result.combined);
-	const allMatches = [...new Set([...stdoutMatches, ...stderrMatches])];
+	const commandMatches = commandForDisplay === command ? [] : redactSecrets(command).matched;
+	const allMatches = [...new Set([...stdoutMatches, ...stderrMatches, ...commandMatches])];
 
 	const parsed = await withSpan("failsafe.parse", async (setAttrs) => {
 		// Template mining is a last resort for a command that actually failed;
@@ -163,7 +176,7 @@ async function analyzeCommandImpl(
 
 	const output: Record<string, unknown> = {
 		schema_version: SCHEMA_VERSION,
-		command,
+		command: commandForDisplay,
 		status,
 		exit_code: result.exit_code,
 		failure_id: id,
@@ -202,7 +215,7 @@ async function analyzeCommandImpl(
 		failure_id: id,
 		created_at: new Date().toISOString(),
 		workspace: process.cwd(),
-		command,
+		command: commandForDisplay,
 		cwd: result.cwd,
 		env_fingerprint: result.env_fingerprint,
 		status,

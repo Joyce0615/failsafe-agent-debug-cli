@@ -81,6 +81,43 @@ describe("analyzeCommand", () => {
 		expect(onDiskStderr).toContain("[REDACTED]");
 	}, 30_000);
 
+	test("redacts an inline env-var secret in the COMMAND itself before returning or storing it (item 5)", async () => {
+		// A very common shape: a credential passed as a leading inline env
+		// assignment on the command line itself, e.g. `GITHUB_TOKEN=... npm test`.
+		// This must never be captured verbatim, by default, in the JSON response
+		// or in the persisted FailureRecord.
+		const secretToken = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+		const secretCommand = `GITHUB_TOKEN=${secretToken} node -e "process.exit(1)"`;
+		const r = await analyzeCommand(secretCommand, config, store, { noPolicy: true });
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+
+		// The response packet's `command` field must be redacted.
+		expect(r.data.command as string).not.toContain(secretToken);
+		expect(r.data.command as string).toContain("[REDACTED]");
+
+		// The persisted FailureRecord's `command` field must ALSO be redacted —
+		// it is written to the SQLite store and read back verbatim by every
+		// other command (diagnose/repro/verify/history/export).
+		const id = r.data.failure_id as string;
+		const stored = store.getFailure(id);
+		expect(stored?.command).not.toContain(secretToken);
+		expect(stored?.command).toContain("[REDACTED]");
+	}, 30_000);
+
+	test("security.redact_env = false opts out of command redaction", async () => {
+		const secretToken = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+		const secretCommand = `GITHUB_TOKEN=${secretToken} node -e "process.exit(1)"`;
+		const optOutConfig = {
+			...config,
+			security: { ...config.security, redact_env: false },
+		};
+		const r = await analyzeCommand(secretCommand, optOutConfig, store, { noPolicy: true });
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(r.data.command as string).toContain(secretToken);
+	}, 30_000);
+
 	test("passed command yields passed status", async () => {
 		const r = await analyzeCommand('node -e "process.exit(0)"', config, store);
 		expect(r.ok).toBe(true);
@@ -129,6 +166,24 @@ describe("reproFailure", () => {
 			expect(repro.data.failure_id).toBe(id);
 			expect(repro.data.repro_id).toBeDefined();
 			expect(repro.data.command).toBeDefined();
+		}
+	}, 30_000);
+
+	test("a repro built from a secret-bearing command does not resurrect the secret (item 5)", async () => {
+		const secretToken = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij";
+		const run = await analyzeCommand(
+			`GITHUB_TOKEN=${secretToken} python3 -c "raise KeyError('x')"`,
+			config,
+			store,
+			{ noPolicy: true },
+		);
+		if (!run.ok) throw new Error("setup failed");
+		const id = run.data.failure_id as string;
+
+		const repro = await reproFailure(id, store, { verify: false });
+		expect(repro.ok).toBe(true);
+		if (repro.ok) {
+			expect(JSON.stringify(repro.data)).not.toContain(secretToken);
 		}
 	}, 30_000);
 });
