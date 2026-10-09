@@ -9,6 +9,7 @@ import {
 	importBundles,
 	signBundle,
 } from "../exchange/bundle.js";
+import { computeSignatureHash } from "../rules/learned.js";
 import { bundleId } from "../utils/id.js";
 import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
@@ -83,7 +84,17 @@ export function registerBundleCommand(program: Command): void {
 				...(scope.has("failure")
 					? {
 							failure: {
-								signature_hash: failure.failure_id,
+								// Stable across runs of the same logical bug (same error
+								// shape/location, independent of the random per-run
+								// failure_id) — the SAME hash every other command in this
+								// CLI already uses for exactly this purpose (resolve,
+								// kb export/import, rules export-learned). Using
+								// `failure.failure_id` here would mint a fresh, unique
+								// signature_hash on every single run, breaking dedup and
+								// corroboration (bundleFingerprint/importBundles) for the
+								// one case they most need to work: the same bug reported
+								// twice.
+								signature_hash: computeSignatureHash(errors, failure.primary_location),
 								failure_type: failure.parsed[0]?.failure_type ?? "unknown",
 								message: errors[0]?.message ?? "",
 								...(failure.primary_location
