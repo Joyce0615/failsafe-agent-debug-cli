@@ -271,4 +271,29 @@ describe("writable paths", () => {
 		expect(pathWritable("/work/repo", PROFILES.reproducer, ROOTS)).toBe(true);
 		expect(pathWritable("/work/repo/", PROFILES.reproducer, ROOTS)).toBe(true);
 	});
+
+	test("a `..` traversal that escapes the root resolves before grading, not via string prefix", () => {
+		// `/work/repo/../../etc/shadow` string-starts-with `/work/repo`, but it
+		// resolves to `/etc/shadow` — a denied path, not a workspace path. A
+		// grader that compares the raw string (rather than the normalized,
+		// `..`-resolved path) against the writable/denied roots would call this
+		// writable, which is exactly the gap item 6 exists to catch: the
+		// sandbox would believe a reproducer wrote only inside its root when it
+		// in fact touched `/etc/shadow`.
+		expect(pathWritable("/work/repo/../../etc/shadow", PROFILES.reproducer, ROOTS)).toBe(false);
+		// Same shape against a credential path denied in every profile.
+		expect(
+			pathWritable("/work/repo/../../root/.ssh/authorized_keys", PROFILES.proposed_fix, ROOTS),
+		).toBe(false);
+		// A `..` that stays inside the workspace must still be writable — the
+		// fix must resolve the path, not merely reject every `..`.
+		expect(pathWritable("/work/repo/src/../src/x.py", PROFILES.reproducer, ROOTS)).toBe(true);
+	});
+
+	test("a `..` traversal that lands on a sibling directory sharing a prefix is not writable", () => {
+		// `/work/repo/../repo-backup/x` resolves to `/work/repo-backup/x`, which
+		// the plain string-prefix test above already proves is not writable
+		// when written directly — the traversal form must be graded identically.
+		expect(pathWritable("/work/repo/../repo-backup/x", PROFILES.reproducer, ROOTS)).toBe(false);
+	});
 });

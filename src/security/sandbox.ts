@@ -417,17 +417,50 @@ export function pathWritable(
 	profile: SandboxProfile,
 	roots: { workspace: string; tmpdir: string },
 ): boolean {
-	const normalized = path.replace(/\/+$/, "");
+	// Resolve `.`/`..` segments before grading. A raw string-prefix comparison
+	// treats `/work/repo/../../etc/shadow` as inside `/work/repo` because the
+	// *string* starts with it, even though the path it actually names is
+	// `/etc/shadow`. That turns the one thing this module exists to report
+	// honestly — which paths a sandboxed process can touch — into exactly the
+	// kind of claimed containment that does not exist (see the module's own
+	// commitment #2). Resolving first makes the grade match the filesystem
+	// path the OS would actually open.
+	const normalized = resolvePosixPath(path);
 	for (const denied of profile.filesystem.denied_paths) {
-		const expanded = expand(denied, roots);
+		const expanded = resolvePosixPath(expand(denied, roots));
 		if (normalized === expanded || normalized.startsWith(`${expanded}/`)) return false;
 	}
 	for (const writable of profile.filesystem.writable_paths) {
-		const expanded = expand(writable, roots);
+		const expanded = resolvePosixPath(expand(writable, roots));
 		if (expanded === roots.workspace && !profile.filesystem.workspace_writable) continue;
 		if (normalized === expanded || normalized.startsWith(`${expanded}/`)) return true;
 	}
 	return false;
+}
+
+/**
+ * Resolve `.`/`..` segments in a POSIX path string, purely lexically (no
+ * filesystem access, so this stays safe to call on paths that may not
+ * exist, may be symlinks, or may be denied to even stat). A leading `..` on
+ * an absolute path has nowhere left to go and is dropped, matching
+ * `path.posix.normalize`/`resolve` semantics rather than escaping past root.
+ * Trailing slashes are stripped except for the root itself.
+ */
+function resolvePosixPath(path: string): string {
+	const isAbsolute = path.startsWith("/");
+	const parts = path.split("/");
+	const resolved: string[] = [];
+	for (const part of parts) {
+		if (part === "" || part === ".") continue;
+		if (part === "..") {
+			if (resolved.length > 0) resolved.pop();
+			continue;
+		}
+		resolved.push(part);
+	}
+	const joined = resolved.join("/");
+	if (isAbsolute) return `/${joined}`;
+	return joined;
 }
 
 function expand(template: string, roots: { workspace: string; tmpdir: string }): string {
