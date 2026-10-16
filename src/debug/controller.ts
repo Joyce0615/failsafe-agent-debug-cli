@@ -84,6 +84,21 @@ export class DebugController {
 		// Wait for initialized event
 		const initializedPromise = client.waitForEvent("initialized", 10_000);
 
+		// Launch (fire now, await later): some adapters (e.g. debugpy) only
+		// emit 'initialized' once a launch/attach request has been received,
+		// and in all cases the DAP spec says the launch RESPONSE does not
+		// arrive until after configurationDone -- awaiting it here would
+		// deadlock.
+		const launchArgs = adapter.launchArgs({
+			program: launchConfig.program,
+			module: launchConfig.module,
+			args: launchConfig.args,
+			cwd: launchConfig.cwd,
+		});
+		const launchPromise = client.launch(launchArgs);
+
+		await initializedPromise;
+
 		// Set breakpoints
 		for (const bp of options.breakpoints) {
 			await client.setBreakpoints({ path: bp.file }, [{ line: bp.line }]);
@@ -92,17 +107,8 @@ export class DebugController {
 		// Set exception breakpoints
 		await client.setExceptionBreakpoints(["uncaught"]);
 
-		await initializedPromise;
 		await client.configurationDone();
-
-		// Launch
-		const launchArgs = adapter.launchArgs({
-			program: launchConfig.program,
-			module: launchConfig.module,
-			args: launchConfig.args,
-			cwd: launchConfig.cwd,
-		});
-		await client.launch(launchArgs);
+		await launchPromise;
 
 		// Collect console events
 		const consoleEvents: ConsoleEvent[] = [];

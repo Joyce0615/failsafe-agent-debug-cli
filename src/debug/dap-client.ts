@@ -299,6 +299,18 @@ export class DapClient extends EventEmitter {
 		return this.sendRequest("evaluate", { expression, frameId, context });
 	}
 
+	/**
+	 * Ask the adapter to cancel a previously-issued request by its seq
+	 * number (DAP `cancel`). This is a best-effort hint per the DAP spec:
+	 * the adapter may still complete the original request, or may fail it
+	 * with `success: false`. Callers should treat the original request's
+	 * promise, not this one, as authoritative for whether cancellation
+	 * actually took effect.
+	 */
+	async cancel(requestId: number): Promise<void> {
+		await this.sendRequest("cancel", { requestId });
+	}
+
 	async terminate(): Promise<void> {
 		try {
 			await this.sendRequest("terminate");
