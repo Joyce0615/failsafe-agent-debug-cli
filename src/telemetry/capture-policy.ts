@@ -102,6 +102,14 @@ const METADATA_STRING_KEYS: readonly string[] = [
 	// An exception's class name is an identifier from the program's own type
 	// space. Its message and stack trace are not, and are absent by design.
 	"exception.type",
+	// MCP semantic conventions (item 11), src/telemetry/mcp-conventions.ts. All
+	// three are closed enums or pinned constants describing the call shape, not
+	// its content: the one JSON-RPC method this server serves, the one
+	// transport it runs over, and whether a CallToolResult carried isError.
+	// mcp.session.id is deliberately NOT here — see that module's header.
+	"mcp.method.name",
+	"network.transport",
+	"error.type",
 ];
 
 const METADATA_KEY_SET = new Set(METADATA_STRING_KEYS);

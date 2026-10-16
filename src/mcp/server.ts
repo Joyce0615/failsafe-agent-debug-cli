@@ -31,6 +31,8 @@ import {
 	reproFailure,
 	verifyFailure,
 } from "../core/operations.js";
+import { mcpSpanAttributes, mcpSpanName } from "../telemetry/mcp-conventions.js";
+import { withSpan } from "../telemetry/otel.js";
 
 /** Serialize a core result to an MCP tool response (text content with JSON). */
 function toToolResponse(result: { ok: true; data: unknown } | { ok: false; error: unknown }) {
@@ -39,6 +41,30 @@ function toToolResponse(result: { ok: true; data: unknown } | { ok: false; error
 		content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
 		isError: !result.ok,
 	};
+}
+
+/**
+ * Wrap a tool handler's body in an MCP server span (item 11).
+ *
+ * Every `server.tool(...)` call site below passes its own `toolName` through
+ * this wrapper instead of calling `withSpan` directly, so `mcpSpanAttributes`
+ * is the SINGLE place a `tools/call` span's attributes are assembled —
+ * mirroring item 52's "one builder per span kind" discipline. `fn`'s return
+ * value is read for `isError` (every handler below returns a `CallToolResult`
+ * shape with that field, never a thrown JSON-RPC error) so `error.type` is
+ * populated from the SAME value the client actually receives, not a second,
+ * possibly-drifted copy of it.
+ */
+async function withMcpSpan<T extends { isError?: boolean }>(
+	toolName: string,
+	sessionId: string | undefined,
+	fn: () => Promise<T>,
+): Promise<T> {
+	return withSpan(mcpSpanName(toolName), async (setAttrs) => {
+		const result = await fn();
+		setAttrs(mcpSpanAttributes({ toolName, sessionId, isToolError: result.isError === true }));
+		return result;
+	});
 }
 
 export function createFailsafeMcpServer(): McpServer {
@@ -59,28 +85,29 @@ export function createFailsafeMcpServer(): McpServer {
 			timeout_seconds: z.number().optional().describe("Command timeout in seconds (default 120)"),
 			shell: z.boolean().optional().describe("Allow shell syntax via 'sh -c'"),
 		},
-		async ({ command, diagnose, timeout_seconds, shell }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				const run = await analyzeCommand(command, config, store, {
-					timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
-					shell,
-				});
-				if (!run.ok) return toToolResponse(run);
+		async ({ command, diagnose, timeout_seconds, shell }, extra) =>
+			withMcpSpan("failsafe_analyze", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					const run = await analyzeCommand(command, config, store, {
+						timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
+						shell,
+					});
+					if (!run.ok) return toToolResponse(run);
 
-				if (diagnose) {
-					const failureId = (run.data as { failure_id: string }).failure_id;
-					const diag = await diagnoseFailure(failureId, store, config);
-					if (diag.ok) {
-						return toToolResponse({ ok: true, data: { run: run.data, diagnosis: diag.data } });
+					if (diagnose) {
+						const failureId = (run.data as { failure_id: string }).failure_id;
+						const diag = await diagnoseFailure(failureId, store, config);
+						if (diag.ok) {
+							return toToolResponse({ ok: true, data: { run: run.data, diagnosis: diag.data } });
+						}
 					}
+					return toToolResponse(run);
+				} finally {
+					store.close();
 				}
-				return toToolResponse(run);
-			} finally {
-				store.close();
-			}
-		},
+			}),
 	);
 
 	server.tool(
@@ -89,15 +116,16 @@ export function createFailsafeMcpServer(): McpServer {
 		{
 			failure_id: z.string().describe("Failure id, or 'last' for the most recent failure"),
 		},
-		async ({ failure_id }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				return toToolResponse(await diagnoseFailure(failure_id, store, config));
-			} finally {
-				store.close();
-			}
-		},
+		async ({ failure_id }, extra) =>
+			withMcpSpan("failsafe_diagnose", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					return toToolResponse(await diagnoseFailure(failure_id, store, config));
+				} finally {
+					store.close();
+				}
+			}),
 	);
 
 	server.tool(
@@ -108,20 +136,21 @@ export function createFailsafeMcpServer(): McpServer {
 			verify: z.boolean().optional().describe("Re-run the candidate to verify it reproduces"),
 			timeout_seconds: z.number().optional().describe("Verification timeout in seconds"),
 		},
-		async ({ failure_id, verify, timeout_seconds }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				return toToolResponse(
-					await reproFailure(failure_id, store, {
-						verify,
-						timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
-					}),
-				);
-			} finally {
-				store.close();
-			}
-		},
+		async ({ failure_id, verify, timeout_seconds }, extra) =>
+			withMcpSpan("failsafe_repro", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					return toToolResponse(
+						await reproFailure(failure_id, store, {
+							verify,
+							timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
+						}),
+					);
+				} finally {
+					store.close();
+				}
+			}),
 	);
 
 	server.tool(
@@ -131,19 +160,20 @@ export function createFailsafeMcpServer(): McpServer {
 			failure_id: z.string().describe("Failure id, or 'last' for the most recent failure"),
 			timeout_seconds: z.number().optional().describe("Command timeout in seconds"),
 		},
-		async ({ failure_id, timeout_seconds }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				return toToolResponse(
-					await verifyFailure(failure_id, store, config, {
-						timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
-					}),
-				);
-			} finally {
-				store.close();
-			}
-		},
+		async ({ failure_id, timeout_seconds }, extra) =>
+			withMcpSpan("failsafe_verify", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					return toToolResponse(
+						await verifyFailure(failure_id, store, config, {
+							timeoutMs: timeout_seconds ? timeout_seconds * 1000 : undefined,
+						}),
+					);
+				} finally {
+					store.close();
+				}
+			}),
 	);
 
 	server.tool(
@@ -152,15 +182,16 @@ export function createFailsafeMcpServer(): McpServer {
 		{
 			failure_id: z.string().describe("Failure id, or 'last' for the most recent failure"),
 		},
-		async ({ failure_id }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				return toToolResponse(explainFailure(failure_id, store));
-			} finally {
-				store.close();
-			}
-		},
+		async ({ failure_id }, extra) =>
+			withMcpSpan("failsafe_explain", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					return toToolResponse(explainFailure(failure_id, store));
+				} finally {
+					store.close();
+				}
+			}),
 	);
 
 	server.tool(
@@ -173,19 +204,20 @@ export function createFailsafeMcpServer(): McpServer {
 				.optional()
 				.describe("Apply the patch to the working tree (default: validate-only dry run)"),
 		},
-		async ({ failure_id, confirm }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				const result = await applyFixById(failure_id, store, config, { confirm });
-				return {
-					content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
-					isError: result.exit_code !== ExitCode.OK,
-				};
-			} finally {
-				store.close();
-			}
-		},
+		async ({ failure_id, confirm }, extra) =>
+			withMcpSpan("failsafe_apply", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					const result = await applyFixById(failure_id, store, config, { confirm });
+					return {
+						content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+						isError: result.exit_code !== ExitCode.OK,
+					};
+				} finally {
+					store.close();
+				}
+			}),
 	);
 
 	server.tool(
@@ -198,15 +230,16 @@ export function createFailsafeMcpServer(): McpServer {
 				.optional()
 				.describe("A failure id: return failures similar to it instead of the full list"),
 		},
-		async ({ limit, similar }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				return toToolResponse(historyQuery(store, { limit, similar }));
-			} finally {
-				store.close();
-			}
-		},
+		async ({ limit, similar }, extra) =>
+			withMcpSpan("failsafe_history", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					return toToolResponse(historyQuery(store, { limit, similar }));
+				} finally {
+					store.close();
+				}
+			}),
 	);
 
 	server.tool(
@@ -218,23 +251,24 @@ export function createFailsafeMcpServer(): McpServer {
 			port: z.number().optional().describe("Debugger listen port (default 5678)"),
 			runtime: z.string().optional().describe("Override runtime detection: python or node"),
 		},
-		async ({ failure_id, break: breakSpec, port, runtime }) => {
-			const config = loadConfig();
-			const store = createStore(config);
-			try {
-				const result = await debugGuidance(failure_id, store, {
-					break: breakSpec,
-					port,
-					runtime,
-				});
-				return {
-					content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
-					isError: result.exit_code !== ExitCode.OK,
-				};
-			} finally {
-				store.close();
-			}
-		},
+		async ({ failure_id, break: breakSpec, port, runtime }, extra) =>
+			withMcpSpan("failsafe_debug", extra.sessionId, async () => {
+				const config = loadConfig();
+				const store = createStore(config);
+				try {
+					const result = await debugGuidance(failure_id, store, {
+						break: breakSpec,
+						port,
+						runtime,
+					});
+					return {
+						content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+						isError: result.exit_code !== ExitCode.OK,
+					};
+				} finally {
+					store.close();
+				}
+			}),
 	);
 
 	// step/inspect operate only within a single live process; over MCP (a fresh
@@ -245,25 +279,27 @@ export function createFailsafeMcpServer(): McpServer {
 		"failsafe_step",
 		"Step an in-memory debug session. Debug sessions do not persist across invocations, so over MCP this returns the debug_unavailable contract; use failsafe_debug for launch guidance.",
 		sessionArg,
-		async ({ session }) => {
-			const result = debugSessionUnavailable(session);
-			return {
-				content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
-				isError: true,
-			};
-		},
+		async ({ session }, extra) =>
+			withMcpSpan("failsafe_step", extra.sessionId, async () => {
+				const result = debugSessionUnavailable(session);
+				return {
+					content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+					isError: true,
+				};
+			}),
 	);
 	server.tool(
 		"failsafe_inspect",
 		"Inspect an in-memory debug session. Debug sessions do not persist across invocations, so over MCP this returns the debug_unavailable contract; use failsafe_debug for launch guidance.",
 		sessionArg,
-		async ({ session }) => {
-			const result = debugSessionUnavailable(session);
-			return {
-				content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
-				isError: true,
-			};
-		},
+		async ({ session }, extra) =>
+			withMcpSpan("failsafe_inspect", extra.sessionId, async () => {
+				const result = debugSessionUnavailable(session);
+				return {
+					content: [{ type: "text" as const, text: JSON.stringify(result.data, null, 2) }],
+					isError: true,
+				};
+			}),
 	);
 
 	// ─── Resources ──────────────────────────────────────────────────────────
