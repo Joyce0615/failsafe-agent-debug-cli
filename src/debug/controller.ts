@@ -8,7 +8,6 @@ import type {
 	ExceptionEvent,
 	StateDelta,
 	StateSnapshot,
-	VariableSnapshot,
 } from "../types/debug.js";
 import type { ContextSlice } from "../types/diagnosis.js";
 import { debugId } from "../utils/id.js";
@@ -16,6 +15,15 @@ import { getAdapter } from "./adapters/index.js";
 import { DapClient } from "./dap-client.js";
 import { detectRuntime, generateLaunchConfig } from "./launch.js";
 import { captureStateSnapshot, computeStateDelta } from "./state.js";
+import {
+	DEFAULT_VARIABLE_PRIVACY_POLICY,
+	type GovernedVariable,
+	type RawEvaluateResult,
+	type VariablePrivacyPolicy,
+	governEvaluateResult,
+	governVariable,
+	scopeKind,
+} from "./variable-privacy.js";
 
 type ActiveSession = {
 	client: DapClient;
@@ -34,9 +42,14 @@ type StoreInterface = {
 export class DebugController {
 	private sessions = new Map<string, ActiveSession>();
 	private store: StoreInterface;
+	private privacyPolicy: VariablePrivacyPolicy;
 
-	constructor(store: StoreInterface) {
+	constructor(
+		store: StoreInterface,
+		privacyPolicy: VariablePrivacyPolicy = DEFAULT_VARIABLE_PRIVACY_POLICY,
+	) {
 		this.store = store;
+		this.privacyPolicy = privacyPolicy;
 	}
 
 	async startSession(options: {
@@ -274,15 +287,20 @@ export class DebugController {
 	async getVariables(
 		sessionId: string,
 		options: { changed?: boolean; scope?: string } = {},
-	): Promise<VariableSnapshot[]> {
+	): Promise<GovernedVariable[]> {
 		const active = this.getActive(sessionId);
 		const snapshot = active.lastSnapshot;
 		if (!snapshot) return [];
 
-		let vars: VariableSnapshot[] = [];
+		let vars: GovernedVariable[] = [];
 		for (const scope of snapshot.scopes) {
 			if (options.scope && scope.name.toLowerCase() !== options.scope.toLowerCase()) continue;
-			vars = [...vars, ...scope.variables];
+			const exposure = this.privacyPolicy.exposure[scopeKind(scope.name)];
+			if (exposure === "none") continue;
+			vars = [
+				...vars,
+				...scope.variables.map((v) => governVariable(v, exposure, this.privacyPolicy)),
+			];
 		}
 
 		if (options.changed && active.lastSnapshot) {
@@ -297,23 +315,17 @@ export class DebugController {
 	async evaluate(
 		sessionId: string,
 		expression: string,
-	): Promise<{ value: string; type?: string; summary?: string }> {
+	): Promise<{ value?: string; type?: string; summary?: string }> {
 		const active = this.getActive(sessionId);
 		const frameId = active.session.current_frame_id
 			? Number.parseInt(active.session.current_frame_id, 10)
 			: undefined;
 
 		const result = await active.client.evaluate(expression, frameId, "repl");
-		const value = result.result;
-		const type = result.type || undefined;
+		const raw: RawEvaluateResult = { value: result.result, type: result.type || undefined };
+		const governed = governEvaluateResult(expression, raw, this.privacyPolicy);
 
-		// Generate a one-line summary
-		let summary: string | undefined;
-		if (value.length > 100) {
-			summary = `${type ?? "value"}: ${value.substring(0, 100)}...`;
-		}
-
-		return { value, type, summary };
+		return { value: governed.value, type: governed.type, summary: governed.summary };
 	}
 
 	async inspectSource(sessionId: string): Promise<ContextSlice | null> {

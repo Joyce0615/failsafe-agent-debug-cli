@@ -92,6 +92,27 @@ export const FailsafeConfigSchema = z.object({
 		})
 		.default({}),
 	/**
+	 * Debugger variable/evaluate privacy policy (item 19). Enforced by
+	 * `debug/variable-privacy.ts` before a captured snapshot or evaluate
+	 * result reaches `inspect vars`/`inspect expr` output.
+	 */
+	debug_variable_privacy: z
+		.object({
+			/** Exposure level for the DAP `Locals` scope. */
+			locals: z.enum(["none", "summary", "full"]).default("full"),
+			/** Exposure level for the DAP `Arguments`/`Args`/`Parameters` scope. */
+			arguments: z.enum(["none", "summary", "full"]).default("full"),
+			/** Exposure level for the DAP `Closure`/`Upvalues` scope. */
+			closure: z.enum(["none", "summary", "full"]).default("summary"),
+			/** Exposure level for the DAP `Globals` scope. */
+			globals: z.enum(["none", "summary", "full"]).default("summary"),
+			/** Exposure level for a scope kind this policy does not recognize. */
+			other: z.enum(["none", "summary", "full"]).default("summary"),
+			/** Byte ceiling applied to every surviving variable/evaluate value. */
+			max_value_bytes: z.number().int().default(256),
+		})
+		.default({}),
+	/**
 	 * Project-context external memory (item 36). Opt-in: with `enabled:false`
 	 * (the default) nothing is built, read, or attached to any packet.
 	 */

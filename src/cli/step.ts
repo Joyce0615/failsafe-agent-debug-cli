@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { DebugController } from "../debug/controller.js";
+import { governVariableChange, resolveVariablePrivacyPolicy } from "../debug/variable-privacy.js";
 import { ExitCode } from "./exit-codes.js";
 import { outputResult } from "./format.js";
 import { initCommand } from "./shared.js";
@@ -21,7 +22,7 @@ export function registerStepCommand(program: Command): void {
 
 			// Debug sessions are in-memory only within a single process.
 			// step/inspect from a separate CLI invocation cannot reconnect.
-			const controller = new DebugController(store);
+			const controller = new DebugController(store, resolveVariablePrivacyPolicy(config));
 
 			let kind: "over" | "into" | "out" = "over";
 			if (opts.into) kind = "into";
@@ -31,6 +32,10 @@ export function registerStepCommand(program: Command): void {
 
 			try {
 				const delta = await controller.step(opts.session, kind, count);
+				const privacyPolicy = resolveVariablePrivacyPolicy(config);
+				const governedChanges = delta.changed_variables.map((c) =>
+					governVariableChange(c, privacyPolicy),
+				);
 
 				const output: Record<string, unknown> = {
 					debug_session_id: delta.debug_session_id,
@@ -40,7 +45,7 @@ export function registerStepCommand(program: Command): void {
 				};
 
 				if (opts.summary === "delta" || !opts.summary) {
-					output.state_delta = delta.changed_variables;
+					output.state_delta = governedChanges;
 					if (delta.exceptions.length > 0) {
 						output.exceptions = delta.exceptions;
 					}
@@ -67,8 +72,10 @@ export function registerStepCommand(program: Command): void {
 						`[STEP ${kind.toUpperCase()}] ${delta.from_location.file}:${delta.from_location.line} -> ${delta.to_location.file}:${delta.to_location.line}`,
 					];
 					if (delta.interpretation) lines.push(delta.interpretation);
-					for (const c of delta.changed_variables) {
-						lines.push(`  ${c.name}: ${c.before} -> ${c.after}${c.note ? ` (${c.note})` : ""}`);
+					for (const c of governedChanges) {
+						lines.push(
+							`  ${c.name}: ${c.before ?? "[WITHHELD]"} -> ${c.after ?? "[WITHHELD]"}${c.note ? ` (${c.note})` : ""}`,
+						);
 					}
 					return lines.join("\n");
 				});

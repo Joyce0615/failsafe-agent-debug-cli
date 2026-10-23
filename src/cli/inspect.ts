@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { DebugController } from "../debug/controller.js";
+import { resolveVariablePrivacyPolicy } from "../debug/variable-privacy.js";
 import { ExitCode } from "./exit-codes.js";
 import { type OutputOptions, outputResult } from "./format.js";
 import { initCommand } from "./shared.js";
@@ -41,7 +42,7 @@ export function registerInspectCommand(program: Command): void {
 		.option("--scope <name>", "Filter by scope name")
 		.action(async (opts) => {
 			const { config, store, outOpts } = initCommand(opts);
-			const controller = new DebugController(store);
+			const controller = new DebugController(store, resolveVariablePrivacyPolicy(config));
 
 			try {
 				const vars = await controller.getVariables(opts.session, {
@@ -60,7 +61,7 @@ export function registerInspectCommand(program: Command): void {
 					() => {
 						if (vars.length === 0) return "No variables in scope.";
 						return vars
-							.map((v) => `  ${v.name}: ${v.type ? `(${v.type}) ` : ""}${v.value}`)
+							.map((v) => `  ${v.name}: ${v.type ? `(${v.type}) ` : ""}${v.value ?? "[WITHHELD]"}`)
 							.join("\n");
 					},
 				);
@@ -77,7 +78,7 @@ export function registerInspectCommand(program: Command): void {
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
 			const { config, store, outOpts } = initCommand(opts);
-			const controller = new DebugController(store);
+			const controller = new DebugController(store, resolveVariablePrivacyPolicy(config));
 
 			try {
 				const frames = await controller.getStack(opts.session);
@@ -112,7 +113,7 @@ export function registerInspectCommand(program: Command): void {
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (expression: string, opts) => {
 			const { config, store, outOpts } = initCommand(opts);
-			const controller = new DebugController(store);
+			const controller = new DebugController(store, resolveVariablePrivacyPolicy(config));
 
 			try {
 				const result = await controller.evaluate(opts.session, expression);
@@ -128,7 +129,7 @@ export function registerInspectCommand(program: Command): void {
 					},
 					outOpts,
 					() => {
-						let line = `${expression} = ${result.value}`;
+						let line = `${expression} = ${result.value ?? "[WITHHELD]"}`;
 						if (result.type) line = `(${result.type}) ${line}`;
 						return line;
 					},
@@ -146,7 +147,7 @@ export function registerInspectCommand(program: Command): void {
 		.option("--max-bytes <bytes>", "Cap output to this many bytes")
 		.action(async (opts) => {
 			const { config, store, outOpts } = initCommand(opts);
-			const controller = new DebugController(store);
+			const controller = new DebugController(store, resolveVariablePrivacyPolicy(config));
 
 			try {
 				const slice = await controller.inspectSource(opts.session);
