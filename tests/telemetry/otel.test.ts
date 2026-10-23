@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
 	GEN_AI_OPT_IN,
 	diagnoseSpanAttributes,
@@ -11,6 +11,7 @@ import {
 	verifyErrorSpanAttributes,
 	verifySpanAttributes,
 } from "../../src/telemetry/attributes.js";
+import { capturePolicyStats, resetCapturePolicy } from "../../src/telemetry/capture-policy.js";
 import {
 	isTelemetryEnabled,
 	shutdownTelemetry,
@@ -324,6 +325,110 @@ describe("GenAI semantic-convention attributes", () => {
 			return "done";
 		});
 		expect(result).toBe("done");
+	});
+});
+
+// ─── Duplicate exception recording across nested spans (item 18) ────────────────────
+//
+// `withSpan` calls `recordExceptionEvent` on catch, and `withSpan` nests freely
+// (`failsafe.run` wraps `failsafe.parse`, `tools/call` wraps `failsafe.run`,
+// ...). ONE thrown error crossing N nested `withSpan` boundaries must produce
+// exactly ONE `exception` event, not N — a backend that sees the same error
+// recorded on every ancestor span over-counts incidents and makes a single
+// failure look like a cascade. These tests count through the capture-policy's
+// cumulative counters (item 41) rather than inspecting span internals directly,
+// since every field of the event is withheld in the default `metadata` mode
+// and the counters are the one observable that is always present regardless of
+// mode: a single real `exception.message`+`exception.stacktrace` withholding
+// pair is `dropped_mode += 2` exactly once per event recorded.
+describe("duplicate exception recording across nested spans", () => {
+	beforeEach(() => {
+		resetCapturePolicy();
+	});
+
+	test("one error thrown through two nested withSpan calls is recorded exactly once", async () => {
+		process.env[ENDPOINT_VAR] = "http://localhost:4318/v1/traces";
+		const before = capturePolicyStats();
+		try {
+			await withSpan("failsafe.run", async () => {
+				return withSpan("failsafe.parse", async () => {
+					throw new Error("boom-shared-error");
+				});
+			});
+		} catch {
+			// expected: the error still propagates to the caller unchanged.
+		}
+		const after = capturePolicyStats();
+		// message + stacktrace withheld by the default metadata mode, for exactly
+		// ONE recorded event. If the bug regresses, the SAME error is recorded on
+		// both the "parse" and "run" spans and this delta doubles to 4.
+		expect(after.dropped_mode - before.dropped_mode).toBe(2);
+	});
+
+	test("one error thrown through three nested withSpan calls is still recorded exactly once", async () => {
+		process.env[ENDPOINT_VAR] = "http://localhost:4318/v1/traces";
+		const before = capturePolicyStats();
+		try {
+			await withSpan("tools/call", async () => {
+				return withSpan("failsafe.run", async () => {
+					return withSpan("failsafe.parse", async () => {
+						throw new Error("boom-shared-error-3");
+					});
+				});
+			});
+		} catch {
+			// expected
+		}
+		const after = capturePolicyStats();
+		expect(after.dropped_mode - before.dropped_mode).toBe(2);
+	});
+
+	test("two DIFFERENT errors in two SEPARATE (non-nested) withSpan calls are each recorded once", async () => {
+		process.env[ENDPOINT_VAR] = "http://localhost:4318/v1/traces";
+		const before = capturePolicyStats();
+		try {
+			await withSpan("failsafe.run", async () => {
+				throw new Error("first-error");
+			});
+		} catch {
+			// expected
+		}
+		try {
+			await withSpan("failsafe.run", async () => {
+				throw new Error("second-error");
+			});
+		} catch {
+			// expected
+		}
+		const after = capturePolicyStats();
+		// Two distinct errors, two distinct top-level withSpan invocations: dedup
+		// must be scoped to one error's propagation through ITS OWN nesting, never
+		// collapse across unrelated failures.
+		expect(after.dropped_mode - before.dropped_mode).toBe(4);
+	});
+
+	test("a caught-and-rethrown DIFFERENT error inside a nested span is still recorded (not suppressed)", async () => {
+		process.env[ENDPOINT_VAR] = "http://localhost:4318/v1/traces";
+		const before = capturePolicyStats();
+		try {
+			await withSpan("failsafe.run", async () => {
+				try {
+					return await withSpan("failsafe.parse", async () => {
+						throw new Error("inner-error");
+					});
+				} catch {
+					// The outer handler deliberately raises a DIFFERENT error — this is
+					// not the same failure escaping twice, it is two real exceptions.
+					throw new Error("outer-wraps-with-new-error");
+				}
+			});
+		} catch {
+			// expected
+		}
+		const after = capturePolicyStats();
+		// Both the inner and the outer (distinct) errors are real exceptions and
+		// both must be recorded: 2 events × 2 withheld fields each = 4.
+		expect(after.dropped_mode - before.dropped_mode).toBe(4);
 	});
 });
 

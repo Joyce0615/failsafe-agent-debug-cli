@@ -31,6 +31,40 @@ let tracer: Tracer | null = null;
 let provider: { forceFlush(): Promise<void>; shutdown(): Promise<void> } | null = null;
 let initialized = false;
 
+/**
+ * Errors whose `exception` event has already been recorded by SOME ancestor
+ * `withSpan` call in the current propagation.
+ *
+ * `withSpan` nests freely — `tools/call` wraps `failsafe.run` wraps
+ * `failsafe.parse` — and ONE thrown error crosses every one of those span
+ * boundaries on its way out, hitting this module's catch block once per
+ * level. Recording it at every level makes a single failure look, to a
+ * backend that counts `exception` events, like N failures. A `WeakSet` keyed
+ * by the error object itself (not a string digest of its message, which two
+ * *different* errors could share) is the dedup key: it costs nothing to
+ * check, requires no manual cleanup — an entry is reclaimed the moment
+ * nothing else references the error — and, because it is global rather than
+ * scoped to one call tree, two separate throws of the literal same error
+ * object are also correctly treated as one exception, which is the accurate
+ * reading of "the same exception propagated" either way. Two *different*
+ * `Error` instances, even with identical messages, are never conflated: the
+ * cases below treat `new Error("x")` thrown twice as two distinct events,
+ * which is correct — they are two real exceptions, not one escaping twice.
+ *
+ * Deliberately `WeakSet<object>`, not keyed on `unknown`: a non-object throw
+ * (`throw "a string"`) cannot be tracked by identity without boxing it, and
+ * boxing would change what the caller actually threw. Primitive throws are
+ * always recorded at every level they cross — a real but narrow gap, left
+ * open because fabricating a new boxed identity for `"a string"` to close it
+ * would be a worse trade than the rare case of a nested primitive throw.
+ */
+const recordedExceptions = new WeakSet<object>();
+
+/** Zero-valued counters, returned when an exception is skipped as a duplicate. */
+function zeroCounters(): CaptureCounters {
+	return { dropped_mode: 0, dropped_limit: 0, truncated: 0, redacted: 0, high_cardinality: 0 };
+}
+
 export function isTelemetryEnabled(): boolean {
 	return Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT);
 }
@@ -199,12 +233,28 @@ export type EventSink = {
  *
  * Event attribute keys are emitted verbatim: `exception.*` is a semantic
  * convention, not a Failsafe field, so namespacing it would be wrong.
+ *
+ * **Deduplicated by error identity (item 18).** `withSpan` nests, and the SAME
+ * error object reaches this function once per ancestor span it escapes
+ * through. Only the first call for a given error object actually calls
+ * `span.addEvent`; every later call for the identical object is a no-op that
+ * returns zero counters. This does not drop trace context: the event lands on
+ * whichever span recorded it first — the innermost one, which is the span
+ * actually active when the error was thrown — and that span's trace and span
+ * id are exactly the correlation a consumer needs; recording it again on an
+ * ancestor would add copies, not add context. A caller that genuinely raises
+ * a *different* error object (even with an identical message) is unaffected:
+ * dedup is by object identity, never by message or type.
  */
 export function recordExceptionEvent(
 	span: EventSink,
 	error: unknown,
 	opts: { escaped?: boolean } = {},
 ): CaptureCounters {
+	if (error !== null && typeof error === "object") {
+		if (recordedExceptions.has(error)) return zeroCounters();
+		recordedExceptions.add(error);
+	}
 	const event = exceptionEvent(error, opts);
 	const { attributes, counters } = applyCapturePolicy(event.attributes);
 	const cleared: Record<string, string | number | boolean> = {};

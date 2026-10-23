@@ -171,6 +171,68 @@ export type ExceptionEventPayload = {
 };
 
 /**
+ * `code` values and message patterns that identify a resource-exhaustion
+ * failure (item 18) — the one class of exception where a snapshot of
+ * process-level resource counters at the moment of failure is worth more
+ * than the message or stack ever could be, because the *process*, not the
+ * call site, is what ran out of something.
+ *
+ * Matched conservatively: a plain `TypeError` must never be misclassified as
+ * a resource failure merely because its message happens to contain a
+ * substring, so the list is specific signal names and codes a runtime
+ * actually produces for OOM, file-descriptor, and disk-space exhaustion.
+ */
+const RESOURCE_FAILURE_CODES = new Set([
+	"ENOMEM",
+	"EMFILE",
+	"ENFILE",
+	"ENOSPC",
+	"ERR_WORKER_OUT_OF_MEMORY",
+	"ERR_FS_FILE_TOO_LARGE",
+]);
+const RESOURCE_FAILURE_MESSAGE_RE =
+	/\b(ENOMEM|EMFILE|ENFILE|ENOSPC)\b|heap out of memory|allocation failed|out of memory|maximum call stack size exceeded/i;
+
+/**
+ * Whether `error` describes the process (or a subprocess it was watching)
+ * exhausting memory, file descriptors, or disk space, as opposed to an
+ * ordinary application fault.
+ *
+ * Checked by `code` first — the structured signal a runtime attaches to a
+ * real resource error — and by message only as a fallback, since not every
+ * source (a subprocess's stderr, a re-thrown string) carries a `code`.
+ */
+export function isResourceFailureError(error: unknown): boolean {
+	if (error && typeof error === "object") {
+		const code = (error as { code?: unknown }).code;
+		if (typeof code === "string" && RESOURCE_FAILURE_CODES.has(code)) return true;
+	}
+	const message = error instanceof Error ? error.message : String(error);
+	return RESOURCE_FAILURE_MESSAGE_RE.test(message);
+}
+
+/**
+ * Bounded process-resource snapshot, taken at the moment a resource failure
+ * is recorded.
+ *
+ * Fixed to exactly these four `process.memoryUsage()` fields — never a
+ * variable-length profile, heap snapshot, or stack sample — so "bounded" is
+ * structural, not a convention a future caller could accidentally violate.
+ * All four are numbers, so the capture policy (item 41) treats them as
+ * metadata unconditionally: there is no content-bearing string here for
+ * `redacted-content` mode to earn.
+ */
+export function resourceProfileAttributes(): SpanAttributes {
+	const mem = process.memoryUsage();
+	return {
+		"exception.resource_profile.rss_bytes": mem.rss,
+		"exception.resource_profile.heap_used_bytes": mem.heapUsed,
+		"exception.resource_profile.heap_total_bytes": mem.heapTotal,
+		"exception.resource_profile.external_bytes": mem.external,
+	};
+}
+
+/**
  * Build the `exception` event for an error.
  *
  * `exception.type` is a class name and is classified as metadata;
@@ -182,12 +244,19 @@ export type ExceptionEventPayload = {
  * A non-`Error` throw still produces a well-formed event — `type` becomes the
  * runtime type name — because losing the event entirely is worse than losing
  * its class.
+ *
+ * When the error is a resource failure (item 18), `resourceProfileAttributes`
+ * is merged in automatically: that is the one case where the evidence the
+ * process can produce about *itself* at the moment of failure outranks the
+ * message, and it is cheap and bounded enough to attach unconditionally
+ * rather than behind a second opt-in.
  */
 export function exceptionEvent(
 	error: unknown,
 	opts: { escaped?: boolean } = {},
 ): ExceptionEventPayload {
 	const isError = error instanceof Error;
+	const resourceFailure = isResourceFailureError(error);
 	return {
 		name: EXCEPTION_EVENT_NAME,
 		attributes: {
@@ -195,6 +264,7 @@ export function exceptionEvent(
 			"exception.message": isError ? error.message : String(error),
 			"exception.stacktrace": isError ? error.stack : undefined,
 			"exception.escaped": opts.escaped ?? false,
+			...(resourceFailure ? resourceProfileAttributes() : {}),
 		},
 	};
 }

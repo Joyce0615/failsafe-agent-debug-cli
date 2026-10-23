@@ -17,7 +17,9 @@ import {
 	genAiResourceAttributes,
 	genAiSpanAttributes,
 	genAiSpanName,
+	isResourceFailureError,
 	resolveSchemaUrl,
+	resourceProfileAttributes,
 	tracerOptions,
 } from "../../src/telemetry/genai-schema.js";
 import { recordExceptionEvent } from "../../src/telemetry/otel.js";
@@ -174,6 +176,60 @@ describe("exception events", () => {
 		expect(event.attributes["exception.type"]).toBe("string");
 		expect(event.attributes["exception.message"]).toBe("just a string");
 		expect(event.attributes["exception.stacktrace"]).toBeUndefined();
+	});
+});
+
+describe("resource-failure classification and bounded profile evidence (item 18)", () => {
+	test("a plain application error is not a resource failure", () => {
+		expect(isResourceFailureError(new TypeError("cannot read properties of undefined"))).toBe(
+			false,
+		);
+		expect(isResourceFailureError(new Error("assertion failed: expected 1 to equal 2"))).toBe(
+			false,
+		);
+	});
+
+	test("a Node.js resource error is classified by its `code`", () => {
+		const err = Object.assign(new Error("spawn ENOMEM"), { code: "ENOMEM" });
+		expect(isResourceFailureError(err)).toBe(true);
+		const emfile = Object.assign(new Error("too many open files"), { code: "EMFILE" });
+		expect(isResourceFailureError(emfile)).toBe(true);
+	});
+
+	test("a heap-out-of-memory message is classified even without a `code`", () => {
+		expect(isResourceFailureError(new Error("FATAL ERROR: heap out of memory"))).toBe(true);
+		expect(isResourceFailureError(new RangeError("Maximum call stack size exceeded"))).toBe(true);
+	});
+
+	test("resourceProfileAttributes is bounded to exactly four numeric memoryUsage fields", () => {
+		const attrs = resourceProfileAttributes();
+		const keys = Object.keys(attrs).sort();
+		expect(keys).toEqual(
+			[
+				"exception.resource_profile.external_bytes",
+				"exception.resource_profile.heap_total_bytes",
+				"exception.resource_profile.heap_used_bytes",
+				"exception.resource_profile.rss_bytes",
+			].sort(),
+		);
+		for (const value of Object.values(attrs)) {
+			expect(typeof value).toBe("number");
+		}
+	});
+
+	test("exceptionEvent attaches the resource profile only for a resource failure", () => {
+		const oom = Object.assign(new Error("spawn ENOMEM"), { code: "ENOMEM" });
+		const event = exceptionEvent(oom);
+		expect(typeof event.attributes["exception.resource_profile.rss_bytes"]).toBe("number");
+
+		const ordinary = exceptionEvent(new TypeError("boom"));
+		expect(ordinary.attributes["exception.resource_profile.rss_bytes"]).toBeUndefined();
+	});
+
+	test("the resource-profile keys are numeric and so are metadata unconditionally", () => {
+		for (const key of Object.keys(resourceProfileAttributes())) {
+			expect(classifyAttribute(key, 1)).toBe("metadata");
+		}
 	});
 });
 
