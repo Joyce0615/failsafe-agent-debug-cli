@@ -17,6 +17,7 @@ import { buildCausalGraph, rankRootCauses } from "../diagnosis/causal-graph.js";
 import type { CausalEdge, CausalNode } from "../diagnosis/causal-graph.js";
 import { SCHEMA_VERSION } from "../types/common.js";
 import type { EvidenceItem, FailureDiagnosis } from "../types/diagnosis.js";
+import { type ConformanceReport, type LogRecord, buildConformanceReport } from "./conformance.js";
 import {
 	BACKEND_ADAPTERS,
 	type BackendKind,
@@ -273,6 +274,91 @@ export async function diagnoseTrace(
 			dropped_spans: bounded.dropped,
 			max_spans: guarded.query.max_spans,
 		}),
+	};
+}
+
+export type ConformantTraceDiagnosisResult =
+	| {
+			ok: true;
+			data: FailureDiagnosis & { trace_provenance: TraceProvenance };
+			conformance: ConformanceReport;
+	  }
+	| { ok: false; error: { error: true; message: string }; conformance?: ConformanceReport };
+
+/**
+ * `diagnoseTrace`, gated by item 21's conformance check (item 40's missing
+ * piece: nothing previously validated ownership/fidelity or surfaced
+ * unsupported/ambiguous fields before a trace reached diagnosis).
+ *
+ * The query is guarded and the trace fetched exactly as in `diagnoseTrace`.
+ * Normalized spans (plus any correlated log records the caller supplies) are
+ * then run through `buildConformanceReport` BEFORE diagnosis: a batch with
+ * any `blocking` issue (a declared GenAI operation this build does not
+ * recognize) is refused with the conformance report attached so a caller can
+ * see exactly what was unsupported or ambiguous, rather than silently
+ * diagnosing over data this build could not fully interpret. A batch with
+ * only `advisory` issues (undeclared kinds, alias conflicts, structure
+ * mismatches) proceeds to diagnosis, and the conformance report rides along
+ * on the successful result too, so a caller always sees what was surfaced
+ * either way.
+ */
+export async function diagnoseTraceConformant(
+	source: TraceSource,
+	query: TraceQuery,
+	logs: LogRecord[] = [],
+): Promise<ConformantTraceDiagnosisResult> {
+	const guarded = guardQuery(query);
+	if (!guarded.ok) {
+		return { ok: false, error: { error: true, message: guarded.reason } };
+	}
+
+	let payload: unknown;
+	try {
+		payload = await source.fetchTrace(guarded.query.trace_id);
+	} catch (err) {
+		return {
+			ok: false,
+			error: {
+				error: true,
+				message: `Trace fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+			},
+		};
+	}
+
+	const all = BACKEND_ADAPTERS[source.kind](payload);
+	if (all.length === 0) {
+		return {
+			ok: false,
+			error: { error: true, message: `No spans found for trace ${guarded.query.trace_id}` },
+		};
+	}
+
+	const bounded = applyBounds(all, { maxSpans: guarded.query.max_spans });
+	const conformance = buildConformanceReport(bounded.spans, logs);
+
+	if (conformance.blocking_issues > 0) {
+		const blocking = conformance.issues.filter((i) => i.severity === "blocking");
+		return {
+			ok: false,
+			error: {
+				error: true,
+				message: `Trace has ${blocking.length} blocking conformance issue(s); refusing to diagnose over unsupported fields: ${blocking.map((b) => b.detail).join("; ")}`,
+			},
+			conformance,
+		};
+	}
+
+	return {
+		ok: true,
+		data: diagnoseSpans(bounded.spans, {
+			backend: source.kind,
+			source: source.name,
+			trace_id: guarded.query.trace_id,
+			truncated: bounded.truncated,
+			dropped_spans: bounded.dropped,
+			max_spans: guarded.query.max_spans,
+		}),
+		conformance,
 	};
 }
 

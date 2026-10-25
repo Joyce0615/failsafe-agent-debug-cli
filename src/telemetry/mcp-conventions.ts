@@ -83,6 +83,7 @@ export const FAILSAFE_MCP_TOOL_NAMES = [
 	"failsafe_inspect",
 	"failsafe_repro",
 	"failsafe_step",
+	"failsafe_trace_diagnose",
 	"failsafe_verify",
 ] as const;
 

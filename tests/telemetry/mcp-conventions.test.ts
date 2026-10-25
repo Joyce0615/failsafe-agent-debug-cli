@@ -46,9 +46,12 @@ describe("owned-operation validation", () => {
 			"failsafe_inspect",
 			"failsafe_repro",
 			"failsafe_step",
+			"failsafe_trace_diagnose",
 			"failsafe_verify",
 		];
-		expect([...FAILSAFE_MCP_TOOL_NAMES].sort()).toEqual(registered.sort() as unknown as (typeof FAILSAFE_MCP_TOOL_NAMES)[number][]);
+		expect([...FAILSAFE_MCP_TOOL_NAMES].sort()).toEqual(
+			registered.sort() as unknown as (typeof FAILSAFE_MCP_TOOL_NAMES)[number][],
+		);
 	});
 
 	test("a registered tool name is owned", () => {

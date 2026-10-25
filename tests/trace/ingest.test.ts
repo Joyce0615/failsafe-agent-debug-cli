@@ -8,12 +8,14 @@
  * and the reuse of item 38's causal ranking.
  */
 import { describe, expect, test } from "bun:test";
+import type { LogRecord } from "../../src/trace/conformance.js";
 import {
 	MAX_LOOKBACK_MS,
 	MAX_SPANS,
 	type TraceSource,
 	diagnoseSpans,
 	diagnoseTrace,
+	diagnoseTraceConformant,
 	guardQuery,
 	spansToCausalGraph,
 } from "../../src/trace/diagnose.js";
@@ -393,5 +395,77 @@ describe("canonical packet equivalence", () => {
 		expect(packet.root_cause).toBeUndefined();
 		expect(packet.severity).toBe("warning");
 		expect(packet.uncertainty.some((u) => u.includes("No span"))).toBe(true);
+	});
+});
+
+describe("conformance-gated diagnosis (item 21)", () => {
+	test("a trace with no blocking conformance issues diagnoses normally and carries the report", async () => {
+		const result = await diagnoseTraceConformant(fixtureSource("jaeger", JAEGER_PAYLOAD), {
+			trace_id: TRACE_ID,
+		});
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.data.trace_provenance.backend).toBe("jaeger");
+		expect(result.conformance.spans_examined).toBe(3);
+		expect(result.conformance.blocking_issues).toBe(0);
+	});
+
+	test("a declared-but-unrecognized GenAI operation blocks diagnosis and surfaces the issue", async () => {
+		const payload = {
+			data: [
+				{
+					traceID: TRACE_ID,
+					processes: { p1: { serviceName: "svc" } },
+					spans: [
+						{
+							spanID: "aaaa1111",
+							operationName: "weird_op",
+							processID: "p1",
+							startTime: 1_700_000_000_000_000,
+							duration: 1000,
+							tags: [{ key: "gen_ai.operation.name", value: "not_a_real_operation" }],
+						},
+					],
+				},
+			],
+		};
+		const result = await diagnoseTraceConformant(fixtureSource("jaeger", payload), {
+			trace_id: TRACE_ID,
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.error.message).toContain("blocking conformance issue");
+		expect(result.conformance).toBeDefined();
+		expect(result.conformance!.blocking_issues).toBe(1);
+	});
+
+	test("correlated log records supplied by the caller are tallied in the conformance report", async () => {
+		const logs: LogRecord[] = [
+			{
+				ts_ms: 1_700_000_000_000,
+				severity_text: "ERROR",
+				body: "boom",
+				trace_id: TRACE_ID,
+				span_id: "aaaa1111",
+			},
+		];
+		const result = await diagnoseTraceConformant(
+			fixtureSource("jaeger", JAEGER_PAYLOAD),
+			{ trace_id: TRACE_ID },
+			logs,
+		);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.conformance.logs_examined).toBe(1);
+		expect(result.conformance.log_correlation.exact).toBe(1);
+	});
+
+	test("an invalid query is rejected before conformance is even computed", async () => {
+		const result = await diagnoseTraceConformant(fixtureSource("jaeger", JAEGER_PAYLOAD), {
+			trace_id: "",
+		});
+		expect(result.ok).toBe(false);
+		if (result.ok) return;
+		expect(result.conformance).toBeUndefined();
 	});
 });

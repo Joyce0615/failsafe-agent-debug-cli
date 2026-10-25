@@ -73,6 +73,7 @@ describe("MCP server: tools/list", () => {
 			"failsafe_inspect",
 			"failsafe_repro",
 			"failsafe_step",
+			"failsafe_trace_diagnose",
 			"failsafe_verify",
 		]);
 		// Each tool advertises an input schema with a description.
@@ -164,6 +165,103 @@ describe("MCP server: failsafe_verify", () => {
 		expect(Array.isArray(json.checks)).toBe(true);
 		// Original command still exits 1, so verification fails.
 		expect(json.status).toBe("failed");
+	}, 30_000);
+});
+
+describe("MCP server: failsafe_trace_diagnose", () => {
+	const TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736";
+	const CLEAN_PAYLOAD = {
+		data: [
+			{
+				traceID: TRACE_ID,
+				processes: { p1: { serviceName: "checkout" }, p2: { serviceName: "payments" } },
+				spans: [
+					{
+						spanID: "aaaa1111",
+						operationName: "POST /checkout",
+						processID: "p1",
+						startTime: 1_700_000_000_000_000,
+						duration: 500_000,
+						tags: [],
+					},
+					{
+						spanID: "bbbb2222",
+						operationName: "charge",
+						processID: "p2",
+						startTime: 1_700_000_000_050_000,
+						duration: 40_000,
+						references: [{ refType: "CHILD_OF", spanID: "aaaa1111" }],
+						tags: [
+							{ key: "error", value: true },
+							{ key: "exception.message", value: "gateway refused connection" },
+						],
+					},
+				],
+			},
+		],
+	};
+
+	test("diagnoses a clean trace payload and reports the conformance summary", async () => {
+		const { isError, json } = await callTool("failsafe_trace_diagnose", {
+			trace_id: TRACE_ID,
+			backend: "jaeger",
+			payload: CLEAN_PAYLOAD,
+		});
+		expect(isError).toBe(false);
+		expect(json.summary as string).toContain("payments:charge");
+		const conformance = json.conformance as Record<string, unknown>;
+		expect(conformance.spans_examined).toBe(2);
+		expect(conformance.blocking_issues).toBe(0);
+	}, 30_000);
+
+	test("a blocking conformance issue is refused with isError and the conformance report attached", async () => {
+		const blocking = {
+			data: [
+				{
+					traceID: TRACE_ID,
+					processes: { p1: { serviceName: "svc" } },
+					spans: [
+						{
+							spanID: "aaaa1111",
+							operationName: "weird_op",
+							processID: "p1",
+							startTime: 1_700_000_000_000_000,
+							duration: 1000,
+							tags: [{ key: "gen_ai.operation.name", value: "not_a_real_operation" }],
+						},
+					],
+				},
+			],
+		};
+		const { isError, json } = await callTool("failsafe_trace_diagnose", {
+			trace_id: TRACE_ID,
+			backend: "jaeger",
+			payload: blocking,
+		});
+		expect(isError).toBe(true);
+		expect(json.message as string).toContain("blocking conformance issue");
+		expect((json.conformance as Record<string, unknown>).blocking_issues).toBe(1);
+	}, 30_000);
+
+	test("correlated log records are tallied in the report", async () => {
+		const { isError, json } = await callTool("failsafe_trace_diagnose", {
+			trace_id: TRACE_ID,
+			backend: "jaeger",
+			payload: CLEAN_PAYLOAD,
+			logs: [
+				{
+					ts_ms: 1_700_000_000_000,
+					severity_text: "ERROR",
+					body: "gateway refused connection",
+					trace_id: TRACE_ID,
+					span_id: "bbbb2222",
+				},
+			],
+		});
+		expect(isError).toBe(false);
+		const conformance = json.conformance as Record<string, unknown>;
+		expect(conformance.logs_examined).toBe(1);
+		expect((conformance.log_correlation as Record<string, unknown>).exact).toBe(1);
 	}, 30_000);
 });
 

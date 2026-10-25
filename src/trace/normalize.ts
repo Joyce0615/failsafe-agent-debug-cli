@@ -53,6 +53,39 @@ const KEEP_ATTRS = [
 	"db.system",
 	"gen_ai.tool.name",
 	"gen_ai.operation.name",
+	// GenAI conformance ingestion (item 21) resolves create/invoke/plan/
+	// workflow/tool spans through `trace/genai-normalize.ts`'s alias ladder,
+	// which reads these keys directly off `NormalizedSpan.attributes`. Every
+	// key `ATTRIBUTE_ALIASES` can resolve from must survive this keep-list, or
+	// genai-normalize never sees the value a backend actually sent.
+	"openinference.span.kind",
+	"traceloop.span.kind",
+	"llm.request.type",
+	"gen_ai.agent.name",
+	"agent.name",
+	"traceloop.entity.name",
+	"gen_ai.agent.version",
+	"agent.version",
+	"tool.name",
+	"llm.tool.name",
+	"gen_ai.request.model",
+	"gen_ai.response.model",
+	"llm.model_name",
+	"ai.model.id",
+	"gen_ai.provider.name",
+	"gen_ai.system",
+	"llm.system",
+	"gen_ai.conversation.id",
+	"session.id",
+	"traceloop.association.session_id",
+	"gen_ai.usage.input_tokens",
+	"gen_ai.usage.prompt_tokens",
+	"llm.token_count.prompt",
+	"ai.usage.promptTokens",
+	"gen_ai.usage.output_tokens",
+	"gen_ai.usage.completion_tokens",
+	"llm.token_count.completion",
+	"ai.usage.completionTokens",
 ];
 
 /** Cap on attribute value length, so one huge attribute cannot bloat a packet. */

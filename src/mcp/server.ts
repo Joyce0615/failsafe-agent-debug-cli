@@ -33,6 +33,9 @@ import {
 } from "../core/operations.js";
 import { mcpSpanAttributes, mcpSpanName } from "../telemetry/mcp-conventions.js";
 import { withSpan } from "../telemetry/otel.js";
+import type { LogRecord } from "../trace/conformance.js";
+import { diagnoseTraceConformant } from "../trace/diagnose.js";
+import type { BackendKind } from "../trace/normalize.js";
 
 /** Serialize a core result to an MCP tool response (text content with JSON). */
 function toToolResponse(result: { ok: true; data: unknown } | { ok: false; error: unknown }) {
@@ -239,6 +242,50 @@ export function createFailsafeMcpServer(): McpServer {
 				} finally {
 					store.close();
 				}
+			}),
+	);
+
+	server.tool(
+		"failsafe_trace_diagnose",
+		"Normalize a locally-exported Jaeger/Tempo trace payload (plus optional correlated OTel log records), validate OTel GenAI agent/workflow conformance (ownership + unsupported/ambiguous fields), and diagnose it. Same contract as `failsafe trace diagnose`. Refuses to diagnose (isError=true) when a blocking conformance issue is found.",
+		{
+			trace_id: z.string().describe("The trace id to diagnose"),
+			backend: z.enum(["jaeger", "tempo"]).describe("Trace backend shape"),
+			payload: z
+				.unknown()
+				.describe("The already-fetched trace payload JSON (Jaeger or OTLP/Tempo shape)"),
+			logs: z
+				.array(z.record(z.unknown()))
+				.optional()
+				.describe("Correlated OTel log records: {ts_ms, severity_text, body, trace_id?, span_id?}"),
+			max_spans: z.number().optional().describe("Span cap for this query"),
+			lookback_ms: z.number().optional().describe("Lookback window ceiling in ms"),
+		},
+		async ({ trace_id, backend, payload, logs, max_spans, lookback_ms }, extra) =>
+			withMcpSpan("failsafe_trace_diagnose", extra.sessionId, async () => {
+				const result = await diagnoseTraceConformant(
+					{
+						kind: backend as BackendKind,
+						name: "mcp:failsafe_trace_diagnose",
+						fetchTrace: async () => payload,
+					},
+					{
+						trace_id,
+						...(max_spans !== undefined ? { max_spans } : {}),
+						...(lookback_ms !== undefined ? { lookback_ms } : {}),
+					},
+					(logs as LogRecord[] | undefined) ?? [],
+				);
+				if (!result.ok) {
+					return toToolResponse({
+						ok: false,
+						error: { ...result.error, conformance: result.conformance },
+					});
+				}
+				return toToolResponse({
+					ok: true,
+					data: { ...result.data, conformance: result.conformance },
+				});
 			}),
 	);
 

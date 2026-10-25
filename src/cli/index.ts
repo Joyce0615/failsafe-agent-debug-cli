@@ -24,6 +24,7 @@ import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
 import { registerStepCommand } from "./step.js";
 import { registerTimelineCommand } from "./timeline.js";
+import { registerTraceCommand } from "./trace.js";
 import { registerVerifyCommand } from "./verify.js";
 import { registerWatchCommand } from "./watch.js";
 
@@ -69,6 +70,7 @@ registerHypothesesCommand(program);
 registerIntentCommand(program);
 registerTimelineCommand(program);
 registerBundleCommand(program);
+registerTraceCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
