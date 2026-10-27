@@ -13,6 +13,7 @@ import { registerDumpCommand } from "./dump.js";
 import { registerExplainCommand } from "./explain.js";
 import { registerHistoryCommand } from "./history.js";
 import { registerHypothesesCommand } from "./hypotheses.js";
+import { registerIncidentsCommand } from "./incidents.js";
 import { registerInspectCommand } from "./inspect.js";
 import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
@@ -71,6 +72,7 @@ registerIntentCommand(program);
 registerTimelineCommand(program);
 registerBundleCommand(program);
 registerTraceCommand(program);
+registerIncidentsCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();

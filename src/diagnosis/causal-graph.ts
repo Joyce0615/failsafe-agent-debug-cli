@@ -27,7 +27,19 @@ export type CausalNode = {
 };
 
 /** An edge `from -> to` means `from` is upstream of (influences/causes) `to`. */
-export type CausalEdgeType = "causes" | "child_of" | "retry_of" | "depends_on";
+export type CausalEdgeType =
+	| "causes"
+	| "child_of"
+	| "retry_of"
+	| "depends_on"
+	// Cross-agent incident-graph edge kinds (item 22): added here, not a parallel
+	// union, so `incident-graph.ts`'s typed edges are CausalEdges in every sense
+	// this file's `rankRootCauses` already understands -- no second graph type.
+	| "delegates_to"
+	| "sends_message_to"
+	| "shares_memory_with"
+	| "shares_tool_with"
+	| "shares_environment_with";
 export type CausalEdge = { from: string; to: string; type: CausalEdgeType };
 
 export type CausalGraph = {
