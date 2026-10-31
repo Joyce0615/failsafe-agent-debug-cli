@@ -1,11 +1,17 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
+import { fitCalibration, loadPredictions } from "../diagnosis/calibration.js";
+import {
+	applyCalibratedObservation,
+	differentialStopDecision,
+	planDiscriminatingExperiments,
+} from "../diagnosis/differential.js";
+import type { Experiment } from "../diagnosis/experiments.js";
 import {
 	type Intent,
 	type Observation,
 	abandonHypothesis,
 	buildHypothesisTree,
-	recordObservation,
 	summarize,
 	validateTree,
 } from "../diagnosis/hypothesis.js";
@@ -15,6 +21,7 @@ import {
 	intentForSubject,
 	reconcile,
 } from "../diagnosis/intent.js";
+import { DEFAULT_STOPPING_POLICY, type InvestigationState } from "../diagnosis/stopping.js";
 import type { SourceLocation } from "../types/common.js";
 import type { ParsedError } from "../types/failure.js";
 import { ExitCode } from "./exit-codes.js";
@@ -177,6 +184,10 @@ export function registerHypothesesCommand(program: Command): void {
 		.requiredOption("--detail <text>", "What was actually observed")
 		.option("--likelihood-if-true <p>", "P(observation | hypothesis true)", "0.9")
 		.option("--likelihood-if-false <p>", "P(observation | hypothesis false)", "0.2")
+		.option(
+			"--calibration-predictions <file>",
+			"JSONL of past localization predictions (item 45); when given, surviving posteriors are replaced by the observed-accuracy calibrator instead of the raw Bayes update",
+		)
 		.option("--format <format>", "Output format: json or text")
 		.action(async (rawId: string, hypothesisId: string, opts) => {
 			const { store, outOpts } = initCommand(opts);
@@ -202,18 +213,119 @@ export function registerHypothesesCommand(program: Command): void {
 				process.exit(ExitCode.ERROR);
 			}
 
-			const { tree: updated, transitions } = recordObservation(tree, hypothesisId, {
-				detail: opts.detail,
-				outcome,
-				observed_at: new Date().toISOString(),
-				likelihood_if_true: parseUnit(opts.likelihoodIfTrue, 0.9),
-				likelihood_if_false: parseUnit(opts.likelihoodIfFalse, 0.2),
-			});
+			const calibration = opts.calibrationPredictions
+				? fitCalibration(loadPredictions(readOrNull(opts.calibrationPredictions) ?? ""))
+				: undefined;
+
+			const {
+				tree: updated,
+				transitions,
+				calibrated,
+			} = applyCalibratedObservation(
+				tree,
+				hypothesisId,
+				{
+					detail: opts.detail,
+					outcome,
+					observed_at: new Date().toISOString(),
+					likelihood_if_true: parseUnit(opts.likelihoodIfTrue, 0.9),
+					likelihood_if_false: parseUnit(opts.likelihoodIfFalse, 0.2),
+				},
+				calibration,
+			);
 			store.saveHypotheses(updated);
 			outputResult(
-				{ status: "observed", transitions, ...summarize(updated), hypotheses: updated.hypotheses },
+				{
+					status: "observed",
+					calibrated,
+					transitions,
+					...summarize(updated),
+					hypotheses: updated.hypotheses,
+				},
 				outOpts,
 			);
+			store.close();
+		});
+
+	cmd
+		.command("plan <failure-id>")
+		.description(
+			"Rank and greedily sequence discriminating experiments (item 74) against this failure's stored competing hypotheses, under a cost budget and risk ceiling",
+		)
+		.requiredOption("--catalogue <file>", "Path to a JSON array of Experiment records")
+		.option("--budget <n>", "Cost budget for the plan", "10")
+		.option(
+			"--max-risk <tier>",
+			"observational | reversible | disruptive | destructive",
+			"reversible",
+		)
+		.option("--format <format>", "Output format: json or text")
+		.action(async (rawId: string, opts) => {
+			const { store, outOpts } = initCommand(opts);
+			const { failure } = resolveFailureOrExit(rawId, store, outOpts);
+			const tree = store.getHypotheses(failure.failure_id);
+			if (!tree) {
+				outputResult(
+					{ error: true, message: `No hypotheses stored for ${failure.failure_id}` },
+					outOpts,
+				);
+				store.close();
+				process.exit(ExitCode.NO_INPUT);
+			}
+			let experiments: Experiment[];
+			try {
+				experiments = JSON.parse(readFileSync(opts.catalogue, "utf-8")) as Experiment[];
+			} catch (err) {
+				outputResult(
+					{ error: true, message: `Failed to read catalogue: ${(err as Error).message}` },
+					outOpts,
+				);
+				store.close();
+				process.exit(ExitCode.NO_INPUT);
+			}
+			const budget = Number.parseFloat(opts.budget);
+			const { belief, plan } = planDiscriminatingExperiments(
+				tree,
+				experiments,
+				Number.isFinite(budget) ? budget : 10,
+				{ max_risk: opts.maxRisk },
+			);
+			outputResult({ belief, ...plan }, outOpts);
+			store.close();
+		});
+
+	cmd
+		.command("stop <failure-id>")
+		.description(
+			"Decide whether to stop the investigation into this failure's stored hypotheses: resolved, exhausted, blocked, or indistinguishable",
+		)
+		.requiredOption("--state <file>", "Path to a JSON InvestigationState record")
+		.option("--format <format>", "Output format: json or text")
+		.action(async (rawId: string, opts) => {
+			const { store, outOpts } = initCommand(opts);
+			const { failure } = resolveFailureOrExit(rawId, store, outOpts);
+			const tree = store.getHypotheses(failure.failure_id);
+			if (!tree) {
+				outputResult(
+					{ error: true, message: `No hypotheses stored for ${failure.failure_id}` },
+					outOpts,
+				);
+				store.close();
+				process.exit(ExitCode.NO_INPUT);
+			}
+			let state: InvestigationState;
+			try {
+				state = JSON.parse(readFileSync(opts.state, "utf-8")) as InvestigationState;
+			} catch (err) {
+				outputResult(
+					{ error: true, message: `Failed to read state: ${(err as Error).message}` },
+					outOpts,
+				);
+				store.close();
+				process.exit(ExitCode.NO_INPUT);
+			}
+			const decision = differentialStopDecision(tree, state, DEFAULT_STOPPING_POLICY);
+			outputResult(decision, outOpts);
 			store.close();
 		});
 
