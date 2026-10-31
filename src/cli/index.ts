@@ -18,6 +18,7 @@ import { registerInspectCommand } from "./inspect.js";
 import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
 import { registerMemoryCommand } from "./memory.js";
+import { registerOrchestrationCommand } from "./orchestration.js";
 import { registerRemediateCommand } from "./remediate.js";
 import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
@@ -73,6 +74,7 @@ registerTimelineCommand(program);
 registerBundleCommand(program);
 registerTraceCommand(program);
 registerIncidentsCommand(program);
+registerOrchestrationCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
