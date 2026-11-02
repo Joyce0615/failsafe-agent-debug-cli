@@ -19,6 +19,7 @@ import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
 import { registerMemoryCommand } from "./memory.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
+import { registerPrivacySharingCommand } from "./privacy-sharing.js";
 import { registerRemediateCommand } from "./remediate.js";
 import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
@@ -75,6 +76,7 @@ registerBundleCommand(program);
 registerTraceCommand(program);
 registerIncidentsCommand(program);
 registerOrchestrationCommand(program);
+registerPrivacySharingCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
