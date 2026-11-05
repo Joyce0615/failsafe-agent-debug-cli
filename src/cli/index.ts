@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
+import { registerActionsCommand } from "./actions.js";
 import { registerApplyCommand } from "./apply.js";
 import { registerAutofixCommand } from "./autofix.js";
 import { registerBundleCommand } from "./bundle.js";
@@ -77,6 +78,7 @@ registerTimelineCommand(program);
 registerBundleCommand(program);
 registerCanaryCommand(program);
 registerDriftCommand(program);
+registerActionsCommand(program);
 registerTraceCommand(program);
 registerIncidentsCommand(program);
 registerOrchestrationCommand(program);
