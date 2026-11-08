@@ -31,6 +31,7 @@ import { registerResolveCommand } from "./resolve.js";
 import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
 import { registerStepCommand } from "./step.js";
+import { registerStreamingIncidentCommand } from "./streaming-incident.js";
 import { registerTimelineCommand } from "./timeline.js";
 import { registerTraceGapsCommand } from "./trace-gaps.js";
 import { registerTraceCommand } from "./trace.js";
@@ -89,6 +90,7 @@ registerIncidentsCommand(program);
 registerOrchestrationCommand(program);
 registerPrivacySharingCommand(program);
 registerMemoryRetrievalCommand(program);
+registerStreamingIncidentCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
