@@ -6,6 +6,7 @@ import { registerApplyCommand } from "./apply.js";
 import { registerAutofixCommand } from "./autofix.js";
 import { registerBundleCommand } from "./bundle.js";
 import { registerCanaryCommand } from "./canary.js";
+import { registerCapabilityDriftCommand } from "./capability-drift.js";
 import { registerCiCommand } from "./ci.js";
 import { registerConfigCommand, registerInitCommand } from "./config.js";
 import { registerCrossExamCommand } from "./cross-exam.js";
@@ -91,6 +92,7 @@ registerOrchestrationCommand(program);
 registerPrivacySharingCommand(program);
 registerMemoryRetrievalCommand(program);
 registerStreamingIncidentCommand(program);
+registerCapabilityDriftCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
