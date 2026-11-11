@@ -28,6 +28,7 @@ import { registerMemoryCommand } from "./memory.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
 import { registerPrivacySharingCommand } from "./privacy-sharing.js";
 import { registerRemediateCommand } from "./remediate.js";
+import { registerReplayValidationCommand } from "./replay-validation.js";
 import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
 import { registerRulesCommand } from "./rules.js";
@@ -56,6 +57,7 @@ registerCiCommand(program);
 
 // Phase 1: Repro
 registerReproCommand(program);
+registerReplayValidationCommand(program);
 
 // Phase 2: Debug
 registerDebugCommand(program);
