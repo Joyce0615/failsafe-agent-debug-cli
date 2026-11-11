@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
 import { registerActionsCommand } from "./actions.js";
+import { registerAdvisoriesCommand } from "./advisories.js";
 import { registerApplyCommand } from "./apply.js";
 import { registerAutofixCommand } from "./autofix.js";
 import { registerBundleCommand } from "./bundle.js";
@@ -63,6 +64,7 @@ registerInspectCommand(program);
 registerVerifyCommand(program);
 registerExplainCommand(program);
 registerDumpCommand(program);
+registerAdvisoriesCommand(program);
 registerApplyCommand(program);
 registerAutofixCommand(program);
 registerRemediateCommand(program);
