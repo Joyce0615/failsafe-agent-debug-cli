@@ -28,6 +28,7 @@ import { registerMemoryCommand } from "./memory.js";
 import { registerOperatorAdjudicationCommand } from "./operator-adjudication.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
 import { registerPrivacySharingCommand } from "./privacy-sharing.js";
+import { registerReadinessPortfolioCommand } from "./readiness-portfolio.js";
 import { registerRemediateCommand } from "./remediate.js";
 import { registerReplayValidationCommand } from "./replay-validation.js";
 import { registerReproCommand } from "./repro.js";
@@ -72,6 +73,7 @@ registerApplyCommand(program);
 registerAutofixCommand(program);
 registerRemediateCommand(program);
 registerOperatorAdjudicationCommand(program);
+registerReadinessPortfolioCommand(program);
 registerWatchCommand(program);
 
 // Phase 3: Tiered Rules
