@@ -25,6 +25,7 @@ import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
 import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
 import { registerMemoryCommand } from "./memory.js";
+import { registerOperatorAdjudicationCommand } from "./operator-adjudication.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
 import { registerPrivacySharingCommand } from "./privacy-sharing.js";
 import { registerRemediateCommand } from "./remediate.js";
@@ -70,6 +71,7 @@ registerAdvisoriesCommand(program);
 registerApplyCommand(program);
 registerAutofixCommand(program);
 registerRemediateCommand(program);
+registerOperatorAdjudicationCommand(program);
 registerWatchCommand(program);
 
 // Phase 3: Tiered Rules
