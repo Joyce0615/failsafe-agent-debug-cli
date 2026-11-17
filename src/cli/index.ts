@@ -29,6 +29,7 @@ import { registerNestedOperationsCommand } from "./nested-operations.js";
 import { registerOperatorAdjudicationCommand } from "./operator-adjudication.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
 import { registerPrivacySharingCommand } from "./privacy-sharing.js";
+import { registerProgrammaticToolFailureCommand } from "./programmatic-tool-failure.js";
 import { registerReadinessPortfolioCommand } from "./readiness-portfolio.js";
 import { registerRemediateCommand } from "./remediate.js";
 import { registerReplayValidationCommand } from "./replay-validation.js";
@@ -103,6 +104,7 @@ registerMemoryRetrievalCommand(program);
 registerStreamingIncidentCommand(program);
 registerCapabilityDriftCommand(program);
 registerNestedOperationsCommand(program);
+registerProgrammaticToolFailureCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
