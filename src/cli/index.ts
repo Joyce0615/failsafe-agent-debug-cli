@@ -38,6 +38,7 @@ import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
 import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
+import { registerSpecDivergenceCommand } from "./spec-divergence.js";
 import { registerStepCommand } from "./step.js";
 import { registerStreamingIncidentCommand } from "./streaming-incident.js";
 import { registerTimelineCommand } from "./timeline.js";
@@ -107,6 +108,7 @@ registerCapabilityDriftCommand(program);
 registerNestedOperationsCommand(program);
 registerProgrammaticToolFailureCommand(program);
 registerAuthorizationDriftCommand(program);
+registerSpecDivergenceCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
