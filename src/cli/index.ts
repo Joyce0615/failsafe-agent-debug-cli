@@ -4,6 +4,7 @@ import { isTelemetryEnabled, shutdownTelemetry } from "../telemetry/otel.js";
 import { registerActionsCommand } from "./actions.js";
 import { registerAdvisoriesCommand } from "./advisories.js";
 import { registerApplyCommand } from "./apply.js";
+import { registerAuthorizationDriftCommand } from "./authorization-drift.js";
 import { registerAutofixCommand } from "./autofix.js";
 import { registerBundleCommand } from "./bundle.js";
 import { registerCanaryCommand } from "./canary.js";
@@ -105,6 +106,7 @@ registerStreamingIncidentCommand(program);
 registerCapabilityDriftCommand(program);
 registerNestedOperationsCommand(program);
 registerProgrammaticToolFailureCommand(program);
+registerAuthorizationDriftCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
