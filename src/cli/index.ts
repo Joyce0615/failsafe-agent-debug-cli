@@ -24,6 +24,7 @@ import { registerIncidentsCommand } from "./incidents.js";
 import { registerInspectCommand } from "./inspect.js";
 import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
+import { registerLeakageTraceCommand } from "./leakage-trace.js";
 import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
 import { registerMemoryCommand } from "./memory.js";
 import { registerNestedOperationsCommand } from "./nested-operations.js";
@@ -68,6 +69,7 @@ registerReplayValidationCommand(program);
 // Phase 2: Debug
 registerDebugCommand(program);
 registerStepCommand(program);
+registerLeakageTraceCommand(program);
 registerInspectCommand(program);
 registerVerifyCommand(program);
 registerExplainCommand(program);
