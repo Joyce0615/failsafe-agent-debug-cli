@@ -29,6 +29,7 @@ import { registerKbCommand } from "./kb.js";
 import { registerLeakageTraceCommand } from "./leakage-trace.js";
 import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
 import { registerMemoryCommand } from "./memory.js";
+import { registerMrtrCommand } from "./mrtr.js";
 import { registerNestedOperationsCommand } from "./nested-operations.js";
 import { registerOperatorAdjudicationCommand } from "./operator-adjudication.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
@@ -117,6 +118,7 @@ registerNestedOperationsCommand(program);
 registerProgrammaticToolFailureCommand(program);
 registerAuthorizationDriftCommand(program);
 registerSpecDivergenceCommand(program);
+registerMrtrCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
