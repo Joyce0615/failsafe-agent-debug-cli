@@ -44,6 +44,7 @@ import { registerRemediateCommand } from "./remediate.js";
 import { registerReplayValidationCommand } from "./replay-validation.js";
 import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
+import { registerRetryAmplificationCommand } from "./retry-amplification.js";
 import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
 import { registerSharedStateRaceCommand } from "./shared-state-race.js";
@@ -96,6 +97,7 @@ registerWatchCommand(program);
 
 // Phase 3: Tiered Rules
 registerResolveCommand(program);
+registerRetryAmplificationCommand(program);
 registerRulesCommand(program);
 registerKbCommand(program);
 
