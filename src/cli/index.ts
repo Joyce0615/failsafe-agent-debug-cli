@@ -56,6 +56,7 @@ import { registerTraceCommand } from "./trace.js";
 import { registerTrustedStateContaminationCommand } from "./trusted-state-contamination.js";
 import { registerVerifyCommand } from "./verify.js";
 import { registerWatchCommand } from "./watch.js";
+import { registerWorkflowExecutorAttributionCommand } from "./workflow-executor-attribution.js";
 
 const program = new Command()
 	.name("failsafe")
@@ -129,6 +130,7 @@ registerMrtrCommand(program);
 registerMcpSubscriptionCommand(program);
 registerTrustedStateContaminationCommand(program);
 registerLatentFaultCommand(program);
+registerWorkflowExecutorAttributionCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
