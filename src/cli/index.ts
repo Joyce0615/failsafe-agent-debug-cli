@@ -27,6 +27,7 @@ import { registerInspectCommand } from "./inspect.js";
 import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
 import { registerLeakageTraceCommand } from "./leakage-trace.js";
+import { registerMcpSubscriptionCommand } from "./mcp-subscription.js";
 import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
 import { registerMemoryCommand } from "./memory.js";
 import { registerMrtrCommand } from "./mrtr.js";
@@ -119,6 +120,7 @@ registerProgrammaticToolFailureCommand(program);
 registerAuthorizationDriftCommand(program);
 registerSpecDivergenceCommand(program);
 registerMrtrCommand(program);
+registerMcpSubscriptionCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
