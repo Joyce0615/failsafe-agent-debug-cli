@@ -52,6 +52,7 @@ import { registerStreamingIncidentCommand } from "./streaming-incident.js";
 import { registerTimelineCommand } from "./timeline.js";
 import { registerTraceGapsCommand } from "./trace-gaps.js";
 import { registerTraceCommand } from "./trace.js";
+import { registerTrustedStateContaminationCommand } from "./trusted-state-contamination.js";
 import { registerVerifyCommand } from "./verify.js";
 import { registerWatchCommand } from "./watch.js";
 
@@ -125,6 +126,7 @@ registerSharedStateRaceCommand(program);
 registerOAuthMisbindingCommand(program);
 registerMrtrCommand(program);
 registerMcpSubscriptionCommand(program);
+registerTrustedStateContaminationCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
