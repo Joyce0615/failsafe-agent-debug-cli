@@ -32,6 +32,7 @@ import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
 import { registerMemoryCommand } from "./memory.js";
 import { registerMrtrCommand } from "./mrtr.js";
 import { registerNestedOperationsCommand } from "./nested-operations.js";
+import { registerOAuthMisbindingCommand } from "./oauth-misbinding.js";
 import { registerOperatorAdjudicationCommand } from "./operator-adjudication.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
 import { registerPatchValidationCommand } from "./patch-validation.js";
@@ -121,6 +122,7 @@ registerProgrammaticToolFailureCommand(program);
 registerAuthorizationDriftCommand(program);
 registerSpecDivergenceCommand(program);
 registerSharedStateRaceCommand(program);
+registerOAuthMisbindingCommand(program);
 registerMrtrCommand(program);
 registerMcpSubscriptionCommand(program);
 
