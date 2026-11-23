@@ -26,6 +26,7 @@ import { registerIncidentsCommand } from "./incidents.js";
 import { registerInspectCommand } from "./inspect.js";
 import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
+import { registerLatentFaultCommand } from "./latent-fault-paired-control.js";
 import { registerLeakageTraceCommand } from "./leakage-trace.js";
 import { registerMcpSubscriptionCommand } from "./mcp-subscription.js";
 import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
@@ -127,6 +128,7 @@ registerOAuthMisbindingCommand(program);
 registerMrtrCommand(program);
 registerMcpSubscriptionCommand(program);
 registerTrustedStateContaminationCommand(program);
+registerLatentFaultCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
