@@ -31,6 +31,7 @@ import { registerLeakageTraceCommand } from "./leakage-trace.js";
 import { registerMcpSubscriptionCommand } from "./mcp-subscription.js";
 import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
 import { registerMemoryCommand } from "./memory.js";
+import { registerMigrationForensicsCommand } from "./migration-forensics.js";
 import { registerMrtrCommand } from "./mrtr.js";
 import { registerNestedOperationsCommand } from "./nested-operations.js";
 import { registerOAuthMisbindingCommand } from "./oauth-misbinding.js";
@@ -103,6 +104,7 @@ registerKbCommand(program);
 
 // Phase 4: Project-context memory (item 36)
 registerMemoryCommand(program);
+registerMigrationForensicsCommand(program);
 
 // Phase 5: Hierarchical hypothesis validation (item 43) and design intent (item 46)
 registerHypothesesCommand(program);
