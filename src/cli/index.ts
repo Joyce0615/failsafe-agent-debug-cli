@@ -16,9 +16,9 @@ import { registerCrossExamCommand } from "./cross-exam.js";
 import { registerDebugCommand } from "./debug.js";
 import { registerDiagnoseCommand } from "./diagnose.js";
 import { registerDoctorCommand } from "./doctor.js";
+import { registerDrDrillCommand } from "./dr-drill.js";
 import { registerDriftCommand } from "./drift.js";
 import { registerDumpCommand } from "./dump.js";
-import { registerEvidenceSufficiencyCommand } from "./evidence-sufficiency.js";
 import { registerExplainCommand } from "./explain.js";
 import { registerHandoffCommand } from "./handoff.js";
 import { registerHistoryCommand } from "./history.js";
@@ -27,15 +27,10 @@ import { registerIncidentsCommand } from "./incidents.js";
 import { registerInspectCommand } from "./inspect.js";
 import { registerIntentCommand } from "./intent.js";
 import { registerKbCommand } from "./kb.js";
-import { registerLatentFaultCommand } from "./latent-fault-paired-control.js";
 import { registerLeakageTraceCommand } from "./leakage-trace.js";
-import { registerMcpSubscriptionCommand } from "./mcp-subscription.js";
 import { registerMemoryRetrievalCommand } from "./memory-retrieval.js";
 import { registerMemoryCommand } from "./memory.js";
-import { registerMigrationForensicsCommand } from "./migration-forensics.js";
-import { registerMrtrCommand } from "./mrtr.js";
 import { registerNestedOperationsCommand } from "./nested-operations.js";
-import { registerOAuthMisbindingCommand } from "./oauth-misbinding.js";
 import { registerOperatorAdjudicationCommand } from "./operator-adjudication.js";
 import { registerOrchestrationCommand } from "./orchestration.js";
 import { registerPatchValidationCommand } from "./patch-validation.js";
@@ -46,20 +41,16 @@ import { registerRemediateCommand } from "./remediate.js";
 import { registerReplayValidationCommand } from "./replay-validation.js";
 import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
-import { registerRetryAmplificationCommand } from "./retry-amplification.js";
 import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
-import { registerSharedStateRaceCommand } from "./shared-state-race.js";
 import { registerSpecDivergenceCommand } from "./spec-divergence.js";
 import { registerStepCommand } from "./step.js";
 import { registerStreamingIncidentCommand } from "./streaming-incident.js";
 import { registerTimelineCommand } from "./timeline.js";
 import { registerTraceGapsCommand } from "./trace-gaps.js";
 import { registerTraceCommand } from "./trace.js";
-import { registerTrustedStateContaminationCommand } from "./trusted-state-contamination.js";
 import { registerVerifyCommand } from "./verify.js";
 import { registerWatchCommand } from "./watch.js";
-import { registerWorkflowExecutorAttributionCommand } from "./workflow-executor-attribution.js";
 
 const program = new Command()
 	.name("failsafe")
@@ -85,7 +76,6 @@ registerStepCommand(program);
 registerLeakageTraceCommand(program);
 registerInspectCommand(program);
 registerVerifyCommand(program);
-registerEvidenceSufficiencyCommand(program);
 registerExplainCommand(program);
 registerHandoffCommand(program);
 registerDumpCommand(program);
@@ -100,13 +90,11 @@ registerWatchCommand(program);
 
 // Phase 3: Tiered Rules
 registerResolveCommand(program);
-registerRetryAmplificationCommand(program);
 registerRulesCommand(program);
 registerKbCommand(program);
 
 // Phase 4: Project-context memory (item 36)
 registerMemoryCommand(program);
-registerMigrationForensicsCommand(program);
 
 // Phase 5: Hierarchical hypothesis validation (item 43) and design intent (item 46)
 registerHypothesesCommand(program);
@@ -130,13 +118,7 @@ registerNestedOperationsCommand(program);
 registerProgrammaticToolFailureCommand(program);
 registerAuthorizationDriftCommand(program);
 registerSpecDivergenceCommand(program);
-registerSharedStateRaceCommand(program);
-registerOAuthMisbindingCommand(program);
-registerMrtrCommand(program);
-registerMcpSubscriptionCommand(program);
-registerTrustedStateContaminationCommand(program);
-registerLatentFaultCommand(program);
-registerWorkflowExecutorAttributionCommand(program);
+registerDrDrillCommand(program);
 
 // Use parseAsync so async actions complete before we flush telemetry.
 await program.parseAsync();
