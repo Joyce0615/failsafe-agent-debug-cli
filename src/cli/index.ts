@@ -44,6 +44,7 @@ import { registerReproCommand } from "./repro.js";
 import { registerResolveCommand } from "./resolve.js";
 import { registerRulesCommand } from "./rules.js";
 import { registerRunCommand } from "./run.js";
+import { registerSharedStateRaceCommand } from "./shared-state-race.js";
 import { registerSpecDivergenceCommand } from "./spec-divergence.js";
 import { registerStepCommand } from "./step.js";
 import { registerStreamingIncidentCommand } from "./streaming-incident.js";
@@ -119,6 +120,7 @@ registerNestedOperationsCommand(program);
 registerProgrammaticToolFailureCommand(program);
 registerAuthorizationDriftCommand(program);
 registerSpecDivergenceCommand(program);
+registerSharedStateRaceCommand(program);
 registerMrtrCommand(program);
 registerMcpSubscriptionCommand(program);
 
